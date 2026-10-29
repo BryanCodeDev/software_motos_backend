@@ -116,6 +116,10 @@ function stripCreateDatabaseAndUse(sql) {
 
 function assertNotProduction(action) {
   if (process.env.NODE_ENV === 'production') {
+    if (process.env.ALLOW_PROD_SEED === 'true' && (action === 'seed' || action === 'reset')) {
+      console.warn(`ADVERTENCIA: ${action} permitido en producción por ALLOW_PROD_SEED=true`);
+      return;
+    }
     console.error(`ERROR: ${action} no está permitido en producción.`);
     process.exit(1);
   }
