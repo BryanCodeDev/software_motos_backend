@@ -1,0 +1,38 @@
+module.exports = {
+  env: {
+    NODE_ENV: 'development',
+    PORT: 4000,
+    APP_URL: 'http://localhost:4000',
+    FRONTEND_URL: 'http://localhost:5173',
+    DATABASE_URL: '',
+    DB_HOST: 'localhost',
+    DB_PORT: 3306,
+    DB_USER: 'root',
+    DB_PASSWORD: '',
+    DB_NAME: 'emergency_id',
+    SESSION_SECRET: 'cambiar_este_secreto_en_produccion_minimo_32_caracteres',
+    JWT_ACCESS_SECRET: 'cambiar_este_secreto_de_acceso_en_produccion',
+    JWT_REFRESH_SECRET: 'cambiar_este_secreto_de_refresh_en_produccion',
+    JWT_ACCESS_EXPIRES_IN: '15m',
+    JWT_REFRESH_EXPIRES_IN: '7d',
+    MERCADOPAGO_ACCESS_TOKEN: '',
+    MERCADOPAGO_PUBLIC_KEY: '',
+    MERCADOPAGO_WEBHOOK_SECRET: '',
+    RESEND_API_KEY: '',
+    EMAIL_FROM: 'no-reply@ejemplo.com',
+    APP_NAME: 'Identificaci\u00f3n de Emergencia',
+  },
+  required: [
+    'SESSION_SECRET',
+    'JWT_ACCESS_SECRET',
+    'JWT_REFRESH_SECRET',
+    'EMAIL_FROM',
+  ],
+  optional: [
+    'MERCADOPAGO_PUBLIC_KEY',
+    'MERCADOPAGO_WEBHOOK_SECRET',
+    'FRONTEND_URL',
+    'APP_URL',
+  ],
+};
+

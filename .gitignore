@@ -1,0 +1,60 @@
+# Dependencias
+node_modules/
+
+# Entorno
+.env
+.env.*
+!.env.example
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Datos en tiempo de ejecución
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Cobertura de tests
+coverage/
+.nyc_output/
+
+# Build
+dist/
+build/
+
+# Almacenamiento local / uploads
+storage/
+uploads/
+tmp/
+temp/
+
+# Caché
+.eslintcache
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDEs y editores
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+.idea/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# Otros
+*.local
+*.tgz
+*.pem

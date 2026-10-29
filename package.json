@@ -1,0 +1,36 @@
+{
+  "name": "emergency-id-api",
+  "version": "1.0.0",
+  "description": "Backend de la plataforma de identificación de emergencia - MasterCode Company",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node src/server.js",
+    "migrate": "node scripts/run-migrations.js",
+    "lint": "npx eslint src",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "mercadopago": "^2.1.0",
+    "mysql2": "^3.11.0",
+    "qrcode": "^1.5.4",
+    "resend": "^4.0.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "eslint": "^9.15.0"
+  }
+}
