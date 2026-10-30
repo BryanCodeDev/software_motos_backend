@@ -272,6 +272,48 @@ const downloadQr = async (req, res) => {
   }
   if (rows.length === 0) {
     console.log('[DOWNLOAD_QR] no identifier found for user', userId);
+    // Try to auto-create if eligible
+    try {
+      const qrProduct = await resolveQrActivationProduct();
+      if (qrProduct) {
+        let order = await hasPaidQrActivationOrder(userId, qrProduct.id);
+        if (!order) {
+          const fallback = await db.query(
+            `SELECT id, order_number, payment_status, commercial_status, total_amount, currency FROM orders WHERE user_id = ? AND payment_status = 'approved' AND commercial_status = 'paid' ORDER BY created_at DESC LIMIT 1`,
+            [userId]
+          );
+          order = fallback[0];
+        }
+        if (order) {
+          const profile = await ensureProfile(userId);
+          let value;
+          let tries = 0;
+          do {
+            value = generateIdentifierValue();
+            tries += 1;
+            const exists = await db.query('SELECT id FROM identifiers WHERE value = ?', [value]);
+            if (exists.length === 0) break;
+          } while (tries < MAX_IDENTIFIER_TRIES);
+          if (value) {
+            const result = await db.query(
+              'INSERT INTO identifiers (user_id, profile_id, order_id, value, status) VALUES (?, ?, ?, ?, ?)',
+              [userId, profile.id, order.id, value, 'active']
+            );
+            await db.query('UPDATE emergency_profiles SET is_active = 1 WHERE id = ?', [profile.id]);
+            await db.query(
+              'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+              [userId, 'identifier.create.auto', 'identifiers', String(result.insertId), JSON.stringify({ value, order_id: order.id }), req.ip]
+            );
+            rows = [{ value, status: 'active' }];
+            console.log('[DOWNLOAD_QR] auto-created identifier', result.insertId);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('[DOWNLOAD_QR] auto-create error:', e.message);
+    }
+  }
+  if (rows.length === 0) {
     return res.status(404).json({ error: 'No hay identificador activo' });
   }
 
