@@ -16,18 +16,28 @@ const get = (key, def) => {
   return value === undefined ? def : value;
 };
 
+// Debug log for Railway/MySQL vars
+const dbHost = get('DB_HOST', get('MYSQLHOST', get('MYSQL_HOST', get('RAILWAY_PRIVATE_DOMAIN', 'localhost'))));
+const dbPort = parseInt(get('DB_PORT', get('MYSQLPORT', get('MYSQL_PORT', '3306'))), 10);
+const dbUser = get('DB_USER', get('MYSQLUSER', get('MYSQL_USER', 'root')));
+const dbPass = get('DB_PASSWORD', get('MYSQLPASSWORD', get('MYSQL_PASSWORD', get('MYSQL_ROOT_PASSWORD', ''))));
+const dbName = get('DB_NAME', get('MYSQL_DATABASE', get('MYSQLDATABASE', get('MYSQL_DB', 'railway'))));
+const dbUrl = get('DATABASE_URL', '') || get('MYSQL_URL', '') || '';
+
+console.log(`[CONFIG-DEBUG] NODE_ENV=${get('NODE_ENV')} dbHost=${dbHost} dbPort=${dbPort} dbUser=${dbUser} dbName=${dbName} hasDATABASE_URL=${!!dbUrl} hasMYSQL_URL=${!!get('MYSQL_URL','')} `);
+
 module.exports = {
   env: get('NODE_ENV', 'development'),
   port: parseInt(get('PORT', '4000'), 10),
   appUrl: get('APP_URL', 'http://localhost:4000'),
   frontendUrl: get('FRONTEND_URL', 'http://localhost:5173'),
-  databaseUrl: get('DATABASE_URL', '') || get('MYSQL_URL', '') || `mysql://${get('DB_USER', get('MYSQLUSER', get('MYSQL_USER', 'root')))}:${encodeURIComponent(get('DB_PASSWORD', get('MYSQLPASSWORD', get('MYSQL_PASSWORD', get('MYSQL_ROOT_PASSWORD', '')))))}@${get('DB_HOST', get('MYSQLHOST', get('MYSQL_HOST', 'localhost')))}:${get('DB_PORT', get('MYSQLPORT', get('MYSQL_PORT', '3306')))} /${get('DB_NAME', get('MYSQL_DATABASE', get('MYSQLDATABASE', get('MYSQL_DB', 'emergency_id'))))}`,
+  databaseUrl: dbUrl || `mysql://${dbUser}:${encodeURIComponent(dbPass)}@${dbHost}:${dbPort}/${dbName}`,
   db: {
-    host: get('DB_HOST', get('MYSQLHOST', get('MYSQL_HOST', 'localhost'))),
-    port: parseInt(get('DB_PORT', get('MYSQLPORT', get('MYSQL_PORT', '3306'))), 10),
-    user: get('DB_USER', get('MYSQLUSER', get('MYSQL_USER', 'root'))),
-    password: get('DB_PASSWORD', get('MYSQLPASSWORD', get('MYSQL_PASSWORD', get('MYSQL_ROOT_PASSWORD', '')))),
-    database: get('DB_NAME', get('MYSQL_DATABASE', get('MYSQLDATABASE', get('MYSQL_DB', 'emergency_id')))),
+    host: dbHost,
+    port: dbPort,
+    user: dbUser,
+    password: dbPass,
+    database: dbName,
   },
   sessionSecret: get('SESSION_SECRET', 'cambiar_este_secreto_en_produccion'),
   jwt: {

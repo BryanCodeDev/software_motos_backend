@@ -56,11 +56,16 @@ const EXPECTED_TABLES = [
 
 // ─── Conexión ────────────────────────────────────────────────────
 async function createConnection() {
+  const host = process.env.DB_HOST || process.env.MYSQLHOST || process.env.MYSQL_HOST || process.env.RAILWAY_PRIVATE_DOMAIN || 'localhost';
+  const port = parseInt(process.env.DB_PORT || process.env.MYSQLPORT || process.env.MYSQL_PORT || '3306', 10);
+  const user = process.env.DB_USER || process.env.MYSQLUSER || process.env.MYSQL_USER || 'root';
+  const password = process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD || process.env.MYSQL_ROOT_PASSWORD || '';
+  console.log(`[MIGRATE-DEBUG] host=${host} port=${port} user=${user} db=${getDbName()} hasMYSQL_URL=${!!process.env.MYSQL_URL} hasDATABASE_URL=${!!process.env.DATABASE_URL} NODE_ENV=${process.env.NODE_ENV}`);
   const conn = await mysql2.createConnection({
-    host: process.env.DB_HOST || process.env.MYSQLHOST || process.env.MYSQL_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || process.env.MYSQLPORT || process.env.MYSQL_PORT || '3306', 10),
-    user: process.env.DB_USER || process.env.MYSQLUSER || process.env.MYSQL_USER || 'root',
-    password: process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD || process.env.MYSQL_ROOT_PASSWORD || '',
+    host,
+    port,
+    user,
+    password,
     multipleStatements: true,
     charset: 'UTF8MB4_UNICODE_CI',
   });
@@ -70,7 +75,7 @@ async function createConnection() {
 
 // ─── Helpers ────────────────────────────────────────────────────
 function getDbName() {
-  return process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || process.env.MYSQL_DB || 'emergency_id';
+  return process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || process.env.MYSQL_DB || 'railway';
 }
 
 async function ensureDatabase(conn) {
