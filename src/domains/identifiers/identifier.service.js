@@ -64,6 +64,7 @@ const createIdentifier = async (req, res) => {
     order = fallback[0];
     usedFallback = !!order;
   }
+  console.log('[CREATE_IDENTIFIER] order found:', order ? order.order_number : null, 'total:', order ? order.total_amount : null, 'fallback:', usedFallback);
   if (!order) {
     return res.status(402).json({ error: 'Se requiere pago aprobado para activar el QR', code: 'payment_required' });
   }
@@ -72,7 +73,7 @@ const createIdentifier = async (req, res) => {
   const paidAmount = parseFloat(order.total_amount);
   if (Math.abs(paidAmount - expectedAmount) > 0.009 || order.currency !== qrProduct.currency) {
     if (usedFallback && order.currency === qrProduct.currency && paidAmount >= expectedAmount * 0.5) {
-      // Allow fallback for admin manual payments
+      console.log('[CREATE_IDENTIFIER] allowing fallback amount');
     } else if (!(Math.abs(paidAmount - expectedAmount) <= 1.0 && order.currency === qrProduct.currency)) {
       await db.query(
         'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
@@ -125,6 +126,7 @@ const createIdentifier = async (req, res) => {
     [userId, 'identifier.create', 'identifiers', String(result.insertId), JSON.stringify({ value, order_id: order.id, order_number: order.order_number }), req.ip]
   );
 
+  console.log('[CREATE_IDENTIFIER] created identifier', result.insertId, value);
   return res.status(201).json({
     identifier: {
       id: result.insertId,
