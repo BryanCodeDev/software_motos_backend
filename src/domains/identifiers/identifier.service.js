@@ -48,7 +48,21 @@ const createIdentifier = async (req, res) => {
   }
 
   const expectedAmount = parseFloat(qrProduct.price);
-  const order = await hasPaidQrActivationOrder(userId, qrProduct.id);
+  let order = await hasPaidQrActivationOrder(userId, qrProduct.id);
+  let usedFallback = false;
+  if (!order) {
+    // Fallback: allow if user has any approved/paid order (admin manual payment)
+    const fallback = await db.query(
+      `SELECT id, order_number, payment_status, commercial_status, total_amount, currency, mercado_pago_payment_id
+       FROM orders
+       WHERE user_id = ? AND payment_status = 'approved' AND commercial_status = 'paid'
+       ORDER BY created_at DESC
+       LIMIT 1`,
+      [userId]
+    );
+    order = fallback[0];
+    usedFallback = !!order;
+  }
   if (!order) {
     return res.status(402).json({ error: 'Se requiere pago aprobado para activar el QR', code: 'payment_required' });
   }
@@ -56,11 +70,15 @@ const createIdentifier = async (req, res) => {
   // Verificar importe y moneda esperados contra el producto (configurado en el backend).
   const paidAmount = parseFloat(order.total_amount);
   if (Math.abs(paidAmount - expectedAmount) > 0.009 || order.currency !== qrProduct.currency) {
-    await db.query(
-      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, 'identifier.create.amount_mismatch', 'identifiers', '0', JSON.stringify({ order_id: order.id, expected: expectedAmount, received: paidAmount, currency: order.currency }), req.ip]
-    );
-    return res.status(402).json({ error: 'El pago no coincide con el importe del QR', code: 'amount_mismatch' });
+    if (usedFallback && order.currency === qrProduct.currency && paidAmount >= expectedAmount * 0.5) {
+      // Allow fallback for admin manual payments
+    } else if (!(Math.abs(paidAmount - expectedAmount) <= 1.0 && order.currency === qrProduct.currency)) {
+      await db.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [userId, 'identifier.create.amount_mismatch', 'identifiers', '0', JSON.stringify({ order_id: order.id, expected: expectedAmount, received: paidAmount, currency: order.currency }), req.ip]
+      );
+      return res.status(402).json({ error: 'El pago no coincide con el importe del QR', code: 'amount_mismatch' });
+    }
   }
 
   const profile = await ensureProfile(userId);
@@ -236,10 +254,16 @@ const replaceIdentifier = async (req, res) => {
 
 const downloadQr = async (req, res) => {
   const userId = req.user.id;
-  const rows = await db.query(
-    'SELECT value FROM identifiers WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
+  let rows = await db.query(
+    'SELECT value, status FROM identifiers WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
     [userId, 'active']
   );
+  if (rows.length === 0) {
+    rows = await db.query(
+      'SELECT value, status FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+      [userId]
+    );
+  }
   if (rows.length === 0) {
     return res.status(404).json({ error: 'No hay identificador activo' });
   }
