@@ -5,9 +5,9 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "start": "node src/server.js",
+    "start": "node scripts/auto-migrate.js && node src/server.js",
     "dev": "node src/server.js",
-    "migrate": "node scripts/run-migrations.js",
+    "migrate": "node migrations/migrate.js",
     "lint": "npx eslint src",
     "test": "node --test"
   },
