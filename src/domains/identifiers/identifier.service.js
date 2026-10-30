@@ -125,7 +125,7 @@ const getMyIdentifier = async (req, res) => {
     [userId]
   );
   if (rows.length === 0) {
-    return res.status(404).json({ error: 'No tienes un identificador' });
+    return res.json({ identifier: null });
   }
   const row = rows[0];
   const qrUrl = buildPublicUrl(row.value);
