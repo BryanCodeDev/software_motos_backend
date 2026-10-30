@@ -155,7 +155,7 @@ const updateOrderStatus = async (req, res) => {
   ];
   // El estado de pago 'approved' solo puede ser establecido por la verificación del
   // webhook de la pasarela (servidor), nunca por edición manual del administrador.
-  const paymentAllowed = ['unpaid', 'pending', 'rejected', 'cancelled', 'refunded'];
+  const paymentAllowed = ['unpaid', 'pending', 'approved', 'rejected', 'cancelled', 'refunded'];
 
   if (commercial_status !== undefined && !allowed.includes(commercial_status)) {
     return res.status(400).json({ error: 'Estado comercial inválido' });
@@ -178,6 +178,15 @@ const updateOrderStatus = async (req, res) => {
   if (payment_status !== undefined) {
     fields.push('payment_status = ?');
     values.push(payment_status);
+  }
+  // Pago por WhatsApp: al marcar pagado, sincronizar estado de pago.
+  if (commercial_status === 'paid' && payment_status === undefined) {
+    fields.push('payment_status = ?');
+    values.push('approved');
+  }
+  if (payment_status === 'approved' && commercial_status === undefined) {
+    fields.push('commercial_status = ?');
+    values.push('paid');
   }
   values.push(id);
   await db.query(`UPDATE orders SET ${fields.join(', ')} WHERE id = ?`, values);
