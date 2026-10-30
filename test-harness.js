@@ -20,7 +20,7 @@ const TEST_ENV = {
   MERCADOPAGO_WEBHOOK_SECRET: process.env.MERCADOPAGO_WEBHOOK_SECRET || '',
   RESEND_API_KEY: '',
   EMAIL_FROM: 'no-reply@prueba.emergencia.id',
-  APP_NAME: 'Identificación de Emergencia',
+  APP_NAME: 'Tu QR te Cuida',
 };
 
 // Apply env before requiring config

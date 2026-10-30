@@ -40,7 +40,7 @@ const createPreference = async (req, res) => {
     items: [
       {
         id: String(order.id),
-        title: `Identificación de Emergencia - ${order.product_name || 'Producto'}`,
+        title: `Tu QR te Cuida - ${order.product_name || 'Producto'}`,
         quantity: 1,
         unit_price: parseFloat(order.total_amount),
         currency_id: order.currency || 'COP',

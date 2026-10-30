@@ -58,7 +58,7 @@ const renderBase = ({ title, body, preview }) => `
         </tr>
         <tr>
           <td style="padding:24px;border-top:1px solid #25303a;color:#5a7088;font-size:13px;text-align:center;">
-            ${config.appName} — MasterCode Company<br/>
+            ${config.appName} — <a href="https://mastercodecompany.com/" style="color:#5a7088;">MasterCode Company</a><br/>
             Este correo es transaccional. No responde a este mensaje.
           </td>
         </tr>
@@ -73,7 +73,7 @@ const renderBase = ({ title, body, preview }) => `
 const sendPasswordReset = async (to, resetUrl) => {
   return send({
     to,
-    subject: 'Restablece tu contraseña — Identificación de Emergencia',
+    subject: 'Restablece tu contraseña — Tu QR te Cuida',
     text: `Restablece tu contraseña accediendo a: ${resetUrl}. El enlace expira en 1 hora.`,
     html: renderBase({
       title: 'Restablecimiento de contraseña',
