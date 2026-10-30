@@ -7,7 +7,8 @@
  *
  * Uso: node migrations/migrate.js [comando] [--seed]
  * Comandos:
- *   up      (por defecto) crea la base y aplica schema.sql si aún no existe el esquema
+ *   up      (por defecto) aplica schema.sql si no existe el esquema y luego seed.sql
+ *           si no hay usuarios (SEED_ON_UP=false lo desactiva)
  *   status  muestra el estado del esquema, filas por tabla y un resumen de datos
  *   seed    carga seed.sql (datos de ejemplo; no permitido en producción)
  *   reset   elimina la base y la recrea desde schema.sql (no permitido en producción)
@@ -193,20 +194,36 @@ async function applySeed(conn) {
   console.log('Seed aplicado correctamente.');
 }
 
+// Aplica el seed esencial solo si no hay usuarios (idempotente entre despliegues).
+// Desactivar con SEED_ON_UP=false
+async function seedIfEmpty(conn) {
+  if (process.env.SEED_ON_UP === 'false') {
+    console.log('SEED_ON_UP=false: se omite el seed.');
+    return;
+  }
+  const [[{ n }]] = await conn.query('SELECT COUNT(*) AS n FROM users');
+  if (n > 0) {
+    console.log(`Seed omitido: la base ya tiene ${n} usuario(s).`);
+    return;
+  }
+  await applySeed(conn);
+}
+
 async function cmdUp() {
   const conn = await createConnection();
   try {
     await ensureDatabase(conn);
     const { state, missing } = await schemaState(conn);
-    if (state === 'current') {
-      console.log(`El esquema ya existe en "${getDbName()}". Nada que hacer.`);
-      return;
-    }
     if (state === 'partial') {
       console.error(partialMessage(missing));
       process.exit(1);
     }
-    await applySchema(conn);
+    if (state === 'none') {
+      await applySchema(conn);
+    } else {
+      console.log(`El esquema ya existe en "${getDbName()}".`);
+    }
+    await seedIfEmpty(conn);
   } finally {
     await conn.end();
   }
