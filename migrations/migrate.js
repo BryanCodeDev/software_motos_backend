@@ -28,40 +28,43 @@ try {
   /* dotenv es opcional */
 }
 
-const mysql2 = require('mysql2/promise');
-
-// ─── Configuración ──────────────────────────────────────────────
-const SQL_DIR = __dirname;
-const SCHEMA_FILE = 'schema.sql';
-const SEED_FILE = 'seed.sql';
-
-// Tablas que debe tener el esquema completo (en orden de creación)
-const EXPECTED_TABLES = [
-  'users',
-  'user_sessions',
-  'password_reset_tokens',
-  'emergency_profiles',
-  'emergency_contacts',
-  'privacy_settings',
-  'identifiers',
-  'products',
-  'product_variants',
-  'orders',
-  'order_items',
-  'payment_events',
-  'audit_logs',
-  'alert_configs',
-  'alert_events',
-];
+const { URL } = require('url');
 
 // ─── Conexión ────────────────────────────────────────────────────
 async function createConnection() {
-  const host = process.env.DB_HOST || process.env.MYSQLHOST || process.env.MYSQL_HOST || process.env.RAILWAY_PRIVATE_DOMAIN || 'localhost';
-  const port = parseInt(process.env.DB_PORT || process.env.MYSQLPORT || process.env.MYSQL_PORT || '3306', 10);
-  const user = process.env.DB_USER || process.env.MYSQLUSER || process.env.MYSQL_USER || 'root';
-  const password = process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD || process.env.MYSQL_ROOT_PASSWORD || '';
-  console.log(`[MIGRATE-DEBUG] host=${host} port=${port} user=${user} db=${getDbName()} hasMYSQL_URL=${!!process.env.MYSQL_URL} hasDATABASE_URL=${!!process.env.DATABASE_URL} NODE_ENV=${process.env.NODE_ENV}`);
-  // Intentar con TCP
+  const dbUrl = process.env.DATABASE_URL || process.env.MYSQL_URL || '';
+  const dbName = getDbName();
+  
+  console.log(`[MIGRATE-DEBUG] NODE_ENV=${process.env.NODE_ENV} dbName=${dbName} hasMYSQL_URL=${!!process.env.MYSQL_URL} hasDATABASE_URL=${!!process.env.DATABASE_URL}`);
+  
+  // Intentar primero con URL de conexión (más confiable en Railway)
+  if (dbUrl) {
+    try {
+      const parsed = new URL(dbUrl);
+      console.log(`[MIGRATE-DEBUG] Usando DATABASE_URL/MYSQL_URL -> host=${parsed.hostname} port=${parsed.port || 3306} user=${parsed.username}`);
+      const conn = await mysql2.createConnection({
+        host: parsed.hostname,
+        port: parseInt(parsed.port || '3306', 10),
+        user: decodeURIComponent(parsed.username),
+        password: decodeURIComponent(parsed.password),
+        multipleStatements: true,
+        charset: 'UTF8MB4_UNICODE_CI',
+      });
+      await conn.query('SET NAMES utf8mb4');
+      return conn;
+    } catch (e) {
+      console.error('[MIGRATE-DEBUG] Error usando DATABASE_URL/MYSQL_URL:', e.message);
+    }
+  }
+
+  // Fallback con variables individuales
+  const host = process.env.MYSQLHOST || process.env.DB_HOST || process.env.MYSQL_HOST || process.env.RAILWAY_PRIVATE_DOMAIN || 'localhost';
+  const port = parseInt(process.env.MYSQLPORT || process.env.DB_PORT || process.env.MYSQL_PORT || '3306', 10);
+  const user = process.env.MYSQLUSER || process.env.DB_USER || process.env.MYSQL_USER || 'root';
+  const password = process.env.MYSQLPASSWORD || process.env.MYSQL_ROOT_PASSWORD || process.env.DB_PASSWORD || process.env.MYSQL_PASSWORD || '';
+  
+  console.log(`[MIGRATE-DEBUG] Usando vars individuales -> host=${host} port=${port} user=${user}`);
+  
   try {
     const conn = await mysql2.createConnection({
       host,
@@ -74,29 +77,14 @@ async function createConnection() {
     await conn.query('SET NAMES utf8mb4');
     return conn;
   } catch (e) {
-    console.error('[MIGRATE-DEBUG] Error conexión TCP:', e.message);
-    // Intentar con host alternativo
-    if (host.includes('railway.internal')) {
-      const altHost = process.env.RAILWAY_PRIVATE_DOMAIN || host;
-      console.log(`[MIGRATE-DEBUG] Reintentando con host alternativo: ${altHost}`);
-      const conn = await mysql2.createConnection({
-        host: altHost,
-        port,
-        user,
-        password,
-        multipleStatements: true,
-        charset: 'UTF8MB4_UNICODE_CI',
-      });
-      await conn.query('SET NAMES utf8mb4');
-      return conn;
-    }
+    console.error('[MIGRATE-DEBUG] Error conexión:', e.message);
     throw e;
   }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
 function getDbName() {
-  return process.env.DB_NAME || process.env.MYSQL_DATABASE || process.env.MYSQLDATABASE || process.env.MYSQL_DB || 'railway';
+  return process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || process.env.DB_NAME || process.env.MYSQL_DB || 'railway';
 }
 
 async function ensureDatabase(conn) {
