@@ -274,11 +274,21 @@ const ensureProfile = async (userId) => {
     userId,
   ]);
   if (rows.length === 0) {
-    const result = await db.query(
-      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
-      [userId, '']
-    );
-    return { id: result.insertId };
+    try {
+      const result = await db.query(
+        'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+        [userId, '']
+      );
+      return { id: result.insertId };
+    } catch (err) {
+      if (err.code === 'ER_DUP_ENTRY') {
+        rows = await db.query('SELECT id FROM emergency_profiles WHERE user_id = ?', [
+          userId,
+        ]);
+        return rows[0];
+      }
+      throw err;
+    }
   }
   return rows[0];
 };

@@ -48,20 +48,36 @@ const getOrCreateProfile = async (userId) => {
     [userId]
   );
   if (rows.length === 0) {
-    const result = await db.query(
-      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
-      [userId, '']
-    );
-    const newId = result.insertId;
-    for (const field of PUBLIC_FIELDS) {
-      await db.query(
-        'INSERT INTO privacy_settings (profile_id, field_name, is_public) VALUES (?, ?, 0)',
-        [newId, field]
+    try {
+      const result = await db.query(
+        'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+        [userId, '']
       );
+      const newId = result.insertId;
+      for (const field of PUBLIC_FIELDS) {
+        try {
+          await db.query(
+            'INSERT INTO privacy_settings (profile_id, field_name, is_public) VALUES (?, ?, 0)',
+            [newId, field]
+          );
+        } catch (err) {
+          // ignore duplicates
+        }
+      }
+      rows = await db.query('SELECT * FROM emergency_profiles WHERE id = ?', [
+        newId,
+      ]);
+    } catch (err) {
+      // If duplicate due to race condition, fetch the existing one
+      if (err.code === 'ER_DUP_ENTRY') {
+        rows = await db.query(
+          'SELECT * FROM emergency_profiles WHERE user_id = ?',
+          [userId]
+        );
+      } else {
+        throw err;
+      }
     }
-    rows = await db.query('SELECT * FROM emergency_profiles WHERE id = ?', [
-      newId,
-    ]);
   }
   return rows[0];
 };
