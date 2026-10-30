@@ -58,7 +58,9 @@ module.exports = {
   appName: get('APP_NAME', 'Identificaci\u00f3n de Emergencia'),
   cookie: {
     secure: get('NODE_ENV', 'development') === 'production',
-    sameSite: 'lax',
+    // El frontend (Netlify) y el backend (Railway) son dominios distintos,
+    // por lo que las cookies deben permitirse en peticiones cross-site.
+    sameSite: get('NODE_ENV', 'development') === 'production' ? 'none' : 'lax',
     domain: get('COOKIE_DOMAIN', ''),
   },
 };
