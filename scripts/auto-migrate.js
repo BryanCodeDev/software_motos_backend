@@ -37,8 +37,30 @@ process.env.NODE_ENV = process.env.NODE_ENV || "production";
 
 setTimeout(function() {
   try {
-    run(process.execPath, ["migrations/migrate.js", "up"]);
-    run(process.execPath, ["migrations/migrate.js", "status"]);
+    // Intentar conexión con reintentos
+    let attempts = 0;
+    const maxAttempts = 10;
+    while (attempts < maxAttempts) {
+      console.log(`[AUTO-MIGRATE] Intento de migración ${attempts + 1}/${maxAttempts}...`);
+      const res = spawnSync(process.execPath, ["migrations/migrate.js", "up"], {
+        cwd: path.join(__dirname, ".."),
+        stdio: "inherit",
+        env: process.env,
+      });
+      if (res.status === 0) {
+        console.log("[AUTO-MIGRATE] <<< OK");
+        run(process.execPath, ["migrations/migrate.js", "status"]);
+        break;
+      }
+      attempts++;
+      if (attempts < maxAttempts) {
+        console.log("[AUTO-MIGRATE] Esperando 5 segundos antes de reintentar...");
+        const wait = Date.now() + 5000;
+        while (Date.now() < wait) {}
+      } else {
+        console.error("[AUTO-MIGRATE] No se pudo conectar a MySQL tras varios intentos");
+      }
+    }
   } catch (e) {
     console.error("[AUTO-MIGRATE] Error inesperado: " + e.message);
   }
@@ -46,4 +68,5 @@ setTimeout(function() {
   console.log("[AUTO-MIGRATE] MIGRACIONES COMPLETADAS (o omitidas)");
   console.log("[AUTO-MIGRATE] INICIANDO SERVIDOR...");
   console.log("==============================================\n");
-}, 3000);
+}, 5000);
+

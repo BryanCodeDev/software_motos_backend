@@ -61,16 +61,37 @@ async function createConnection() {
   const user = process.env.DB_USER || process.env.MYSQLUSER || process.env.MYSQL_USER || 'root';
   const password = process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || process.env.MYSQL_PASSWORD || process.env.MYSQL_ROOT_PASSWORD || '';
   console.log(`[MIGRATE-DEBUG] host=${host} port=${port} user=${user} db=${getDbName()} hasMYSQL_URL=${!!process.env.MYSQL_URL} hasDATABASE_URL=${!!process.env.DATABASE_URL} NODE_ENV=${process.env.NODE_ENV}`);
-  const conn = await mysql2.createConnection({
-    host,
-    port,
-    user,
-    password,
-    multipleStatements: true,
-    charset: 'UTF8MB4_UNICODE_CI',
-  });
-  await conn.query('SET NAMES utf8mb4');
-  return conn;
+  // Intentar con TCP
+  try {
+    const conn = await mysql2.createConnection({
+      host,
+      port,
+      user,
+      password,
+      multipleStatements: true,
+      charset: 'UTF8MB4_UNICODE_CI',
+    });
+    await conn.query('SET NAMES utf8mb4');
+    return conn;
+  } catch (e) {
+    console.error('[MIGRATE-DEBUG] Error conexión TCP:', e.message);
+    // Intentar con host alternativo
+    if (host.includes('railway.internal')) {
+      const altHost = process.env.RAILWAY_PRIVATE_DOMAIN || host;
+      console.log(`[MIGRATE-DEBUG] Reintentando con host alternativo: ${altHost}`);
+      const conn = await mysql2.createConnection({
+        host: altHost,
+        port,
+        user,
+        password,
+        multipleStatements: true,
+        charset: 'UTF8MB4_UNICODE_CI',
+      });
+      await conn.query('SET NAMES utf8mb4');
+      return conn;
+    }
+    throw e;
+  }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────
