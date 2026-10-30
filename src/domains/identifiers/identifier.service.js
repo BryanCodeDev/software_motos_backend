@@ -39,6 +39,7 @@ const hasPaidQrActivationOrder = async (userId, productId) => {
 
 const createIdentifier = async (req, res) => {
   const userId = req.user.id;
+  console.log('[CREATE_IDENTIFIER] userId:', userId);
 
   // Gate: requiere una orden de activación de QR digital pagada y verificada por el backend.
   // Nunca se confía en el precio ni en el estado enviados desde el frontend.
@@ -254,17 +255,21 @@ const replaceIdentifier = async (req, res) => {
 
 const downloadQr = async (req, res) => {
   const userId = req.user.id;
+  console.log('[DOWNLOAD_QR] userId:', userId);
   let rows = await db.query(
     'SELECT value, status FROM identifiers WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
     [userId, 'active']
   );
+  console.log('[DOWNLOAD_QR] active rows:', rows.length);
   if (rows.length === 0) {
     rows = await db.query(
       'SELECT value, status FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
       [userId]
     );
+    console.log('[DOWNLOAD_QR] any rows:', rows.length);
   }
   if (rows.length === 0) {
+    console.log('[DOWNLOAD_QR] no identifier found for user', userId);
     return res.status(404).json({ error: 'No hay identificador activo' });
   }
 
@@ -281,6 +286,7 @@ const downloadQr = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error('[DOWNLOAD_QR] error generating:', error.message);
     return res.status(500).json({ error: 'No se pudo generar el código QR' });
   }
 
