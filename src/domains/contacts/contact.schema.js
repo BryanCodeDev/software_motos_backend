@@ -9,7 +9,6 @@ const contactSchema = z.object({
     is_public: z.boolean().optional(),
     display_phone: z.boolean().optional(),
     display_email: z.boolean().optional(),
-    priority_order: z.number().int().min(0).optional(),
   }),
 });
 

@@ -98,7 +98,7 @@ const getProfile = async (req, res) => {
   const profile = await getOrCreateProfile(req.user.id);
   const privacy = await getPrivacyMap(profile.id);
   const contacts = await db.query(
-    'SELECT id, name, relationship, phone, email, is_public, display_phone, display_email, priority_order FROM emergency_contacts WHERE profile_id = ? ORDER BY priority_order ASC, id ASC',
+    'SELECT id, name, relationship, phone, email, is_public, display_phone, display_email FROM emergency_contacts WHERE profile_id = ? AND is_public = 1 ORDER BY id ASC',
     [profile.id]
   );
   const identifiers = await db.query(
@@ -254,7 +254,7 @@ const getPublicProfile = async (req, res) => {
   }
 
   const contacts = await db.query(
-    'SELECT name, relationship, phone, email, display_phone, display_email FROM emergency_contacts WHERE profile_id = ? AND is_public = 1 ORDER BY priority_order ASC, id ASC',
+    'SELECT name, relationship, phone, email, display_phone, display_email FROM emergency_contacts WHERE profile_id = ? AND is_public = 1 ORDER BY id ASC',
     [profile.id]
   );
   const publicContacts = contacts.map((c) => ({
