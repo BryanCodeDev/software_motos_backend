@@ -7,7 +7,7 @@ const generateIdentifierValue = () =>
   `emg_${crypto.randomBytes(12).toString('hex')}`;
 
 const buildPublicUrl = (value) => {
-  const base = config.appUrl.replace(/\/+$/, '');
+  const base = (config.frontendUrl || config.appUrl).replace(/\/+$/, '');
   return `${base}/e/${value}`;
 };
 
