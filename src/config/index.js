@@ -24,8 +24,6 @@ const dbPass = get('DB_PASSWORD', get('MYSQLPASSWORD', get('MYSQL_PASSWORD', get
 const dbName = get('DB_NAME', get('MYSQL_DATABASE', get('MYSQLDATABASE', get('MYSQL_DB', 'railway'))));
 const dbUrl = get('DATABASE_URL', '') || get('MYSQL_URL', '') || '';
 
-console.log(`[CONFIG-DEBUG] NODE_ENV=${get('NODE_ENV')} dbHost=${dbHost} dbPort=${dbPort} dbUser=${dbUser} dbName=${dbName} hasDATABASE_URL=${!!dbUrl} hasMYSQL_URL=${!!get('MYSQL_URL','')} `);
-
 module.exports = {
   env: get('NODE_ENV', 'development'),
   port: parseInt(get('PORT', '4000'), 10),

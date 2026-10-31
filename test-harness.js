@@ -1,4 +1,4 @@
-const { createApp } = require('./app');
+const { createApp } = require('./src/app');
 const http = require('http');
 
 const TEST_ENV = {

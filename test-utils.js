@@ -1,7 +1,7 @@
 const http = require('http');
 const https = require('https');
 const crypto = require('crypto');
-const db = require('./config/db');
+const db = require('./src/config/db');
 
 const BASE = 'http://localhost:4001';
 

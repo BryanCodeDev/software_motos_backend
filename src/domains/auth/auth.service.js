@@ -1,11 +1,11 @@
 const db = require('../../config/db');
-const { hashPassword, comparePassword, generateToken } = require('../../utils/crypto');
+const { hashPassword, comparePassword } = require('../../utils/crypto');
 const {
   createAccessToken,
   createRefreshToken,
   verifyRefreshToken,
 } = require('../../utils/jwt');
-const { createRecoveryToken, consumeRecoveryToken } = require('../../utils/recovery-tokens');
+const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const emailService = require('../../domains/email/email.service');
 const config = require('../../config');
 
@@ -183,7 +183,6 @@ const forgotPassword = async (req, res) => {
     try {
       await emailService.sendPasswordReset(email, resetUrl);
     } catch (error) {
-      console.error('[EMAIL] No se pudo enviar recuperación:', error.message);
     }
   }
 

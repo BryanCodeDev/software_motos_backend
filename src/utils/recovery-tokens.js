@@ -15,7 +15,7 @@ const createRecoveryToken = (userId, ttlMs = 1000 * 60 * 60) => {
 
 const consumeRecoveryToken = (token) => {
   const record = recoveryTokens.get(token);
-  if (!record || record.used) return null;
+  if (!record || record.used) {return null;}
   if (Date.now() - record.createdAt > record.ttlMs) {
     recoveryTokens.delete(token);
     return null;

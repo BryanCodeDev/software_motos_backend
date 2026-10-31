@@ -34,9 +34,9 @@ fs.mkdirSync(PHOTO_STORAGE_DIR, { recursive: true });
 const isSafePhotoFilename = (filename) => /^[A-Za-z0-9_-]+\.(jpg|png|webp)$/.test(filename);
 
 const parsePhotoDataUrl = (dataUrl) => {
-  if (!dataUrl) return null;
+  if (!dataUrl) {return null;}
   const match = String(dataUrl).match(/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/);
-  if (!match) return null;
+  if (!match) {return null;}
   const mime = match[1] === 'jpeg' ? 'image/jpeg' : `image/${match[1]}`;
   const buffer = Buffer.from(match[2], 'base64');
   return { mime, buffer, ext: EXT_BY_MIME[mime] };

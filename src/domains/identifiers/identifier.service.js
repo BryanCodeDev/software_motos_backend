@@ -39,7 +39,6 @@ const hasPaidQrActivationOrder = async (userId, productId) => {
 
 const createIdentifier = async (req, res) => {
   const userId = req.user.id;
-  console.log('[CREATE_IDENTIFIER] userId:', userId);
 
   // Gate: requiere una orden de activación de QR digital pagada y verificada por el backend.
   // Nunca se confía en el precio ni en el estado enviados desde el frontend.
@@ -64,7 +63,6 @@ const createIdentifier = async (req, res) => {
     order = fallback[0];
     usedFallback = !!order;
   }
-  console.log('[CREATE_IDENTIFIER] order found:', order ? order.order_number : null, 'total:', order ? order.total_amount : null, 'fallback:', usedFallback);
   if (!order) {
     return res.status(402).json({ error: 'Se requiere pago aprobado para activar el QR', code: 'payment_required' });
   }
@@ -73,7 +71,6 @@ const createIdentifier = async (req, res) => {
   const paidAmount = parseFloat(order.total_amount);
   if (Math.abs(paidAmount - expectedAmount) > 0.009 || order.currency !== qrProduct.currency) {
     if (usedFallback && order.currency === qrProduct.currency && paidAmount >= expectedAmount * 0.5) {
-      console.log('[CREATE_IDENTIFIER] allowing fallback amount');
     } else if (!(Math.abs(paidAmount - expectedAmount) <= 1.0 && order.currency === qrProduct.currency)) {
       await db.query(
         'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
@@ -125,8 +122,6 @@ const createIdentifier = async (req, res) => {
     'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
     [userId, 'identifier.create', 'identifiers', String(result.insertId), JSON.stringify({ value, order_id: order.id, order_number: order.order_number }), req.ip]
   );
-
-  console.log('[CREATE_IDENTIFIER] created identifier', result.insertId, value);
   return res.status(201).json({
     identifier: {
       id: result.insertId,
@@ -257,21 +252,17 @@ const replaceIdentifier = async (req, res) => {
 
 const downloadQr = async (req, res) => {
   const userId = req.user.id;
-  console.log('[DOWNLOAD_QR] userId:', userId);
   let rows = await db.query(
     'SELECT value, status FROM identifiers WHERE user_id = ? AND status = ? ORDER BY created_at DESC LIMIT 1',
     [userId, 'active']
   );
-  console.log('[DOWNLOAD_QR] active rows:', rows.length);
   if (rows.length === 0) {
     rows = await db.query(
       'SELECT value, status FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
       [userId]
     );
-    console.log('[DOWNLOAD_QR] any rows:', rows.length);
   }
   if (rows.length === 0) {
-    console.log('[DOWNLOAD_QR] no identifier found for user', userId);
     // Try to auto-create if eligible
     try {
       const qrProduct = await resolveQrActivationProduct();
@@ -292,7 +283,7 @@ const downloadQr = async (req, res) => {
             value = generateIdentifierValue();
             tries += 1;
             const exists = await db.query('SELECT id FROM identifiers WHERE value = ?', [value]);
-            if (exists.length === 0) break;
+            if (exists.length === 0) {break;}
           } while (tries < MAX_IDENTIFIER_TRIES);
           if (value) {
             const result = await db.query(
@@ -305,12 +296,10 @@ const downloadQr = async (req, res) => {
               [userId, 'identifier.create.auto', 'identifiers', String(result.insertId), JSON.stringify({ value, order_id: order.id }), req.ip]
             );
             rows = [{ value, status: 'active' }];
-            console.log('[DOWNLOAD_QR] auto-created identifier', result.insertId);
           }
         }
       }
     } catch (e) {
-      console.error('[DOWNLOAD_QR] auto-create error:', e.message);
     }
   }
   if (rows.length === 0) {
@@ -330,7 +319,6 @@ const downloadQr = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('[DOWNLOAD_QR] error generating:', error.message);
     return res.status(500).json({ error: 'No se pudo generar el código QR' });
   }
 

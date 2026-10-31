@@ -8,8 +8,6 @@ const errorHandler = (err, req, res, next) => {
     payload.stack = err.stack;
     payload.details = err.details;
   }
-
-  console.error(`[${status}] ${err.message}`, err.stack || '');
   return res.status(status).json(payload);
 };
 

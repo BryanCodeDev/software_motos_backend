@@ -161,7 +161,6 @@ const createOrder = async (req, res) => {
         });
       }
     } catch (error) {
-      console.error('[EMAIL] No se envió confirmación de pedido:', error.message);
     }
 
     return res.status(201).json({ order });

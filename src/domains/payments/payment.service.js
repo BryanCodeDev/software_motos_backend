@@ -82,29 +82,28 @@ const createPreference = async (req, res) => {
       order_id: order.id,
     });
   } catch (error) {
-    console.error('[MERCADOPAGO] Error creando preferencia:', error.message);
     return res.status(502).json({ error: 'No se pudo crear la preferencia de pago' });
   }
 };
 
 const parseSignatureHeader = (header) => {
   const parts = {};
-  if (!header) return parts;
+  if (!header) {return parts;}
   String(header).split(',').forEach((part) => {
     const eq = part.indexOf('=');
-    if (eq === -1) return;
+    if (eq === -1) {return;}
     const key = part.slice(0, eq).trim();
     const value = part.slice(eq + 1).trim();
-    if (key) parts[key] = value;
+    if (key) {parts[key] = value;}
   });
   return parts;
 };
 
 const buildWebhookManifest = (dataId, requestId, ts) => {
   const segments = [];
-  if (dataId) segments.push(`id:${String(dataId).toLowerCase()}`);
-  if (requestId) segments.push(`request-id:${requestId}`);
-  if (ts) segments.push(`ts:${ts}`);
+  if (dataId) {segments.push(`id:${String(dataId).toLowerCase()}`);}
+  if (requestId) {segments.push(`request-id:${requestId}`);}
+  if (ts) {segments.push(`ts:${ts}`);}
   return segments.length ? segments.join(';') + ';' : '';
 };
 
@@ -114,7 +113,7 @@ const verifyWebhookSignature = (req, secret) => {
   const parsed = parseSignatureHeader(header);
   const ts = parsed.ts;
   const v1 = parsed.v1;
-  if (!ts || !v1) return false;
+  if (!ts || !v1) {return false;}
 
   const dataId =
     (req.query && req.query['data.id']) ||
@@ -126,7 +125,7 @@ const verifyWebhookSignature = (req, secret) => {
   try {
     const expectedBuf = Buffer.from(expected, 'hex');
     const receivedBuf = Buffer.from(v1, 'hex');
-    if (expectedBuf.length !== receivedBuf.length) return false;
+    if (expectedBuf.length !== receivedBuf.length) {return false;}
     return crypto.timingSafeEqual(expectedBuf, receivedBuf);
   } catch {
     return false;
@@ -138,11 +137,9 @@ const mercadopagoWebhook = async (req, res) => {
   //    Un webhook sin firma válida nunca activa un QR.
   if (config.mercadopago.webhookSecret) {
     if (!verifyWebhookSignature(req, config.mercadopago.webhookSecret)) {
-      console.warn('[MERCADOPAGO] Webhook con firma inválida o ausente');
       return res.status(400).json({ error: 'Firma de webhook inválida' });
     }
   } else {
-    console.warn('[MERCADOPAGO] Webhook recibido sin MERCADOPAGO_WEBHOOK_SECRET configurado');
   }
 
   // 2. Responder rápido a Mercado Pago para evitar reintentos.
@@ -156,7 +153,6 @@ const mercadopagoWebhook = async (req, res) => {
     }
 
     if (!config.mercadopago.accessToken) {
-      console.warn('[MERCADOPAGO] Webhook recibido sin credenciales configuradas');
       return;
     }
 
@@ -173,7 +169,6 @@ const mercadopagoWebhook = async (req, res) => {
     ]);
     const order = orders[0];
     if (!order) {
-      console.warn(`[MERCADOPAGO] Pago ${paymentId} referencia orden inexistente ${externalReference}`);
       return;
     }
 
@@ -258,11 +253,9 @@ const mercadopagoWebhook = async (req, res) => {
           });
         }
       } catch (error) {
-        console.error('[EMAIL] No se envió confirmación de pago:', error.message);
       }
     }
   } catch (error) {
-    console.error('[MERCADOPAGO] Error procesando webhook:', error.message);
   }
 };
 

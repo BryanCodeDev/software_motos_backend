@@ -4,7 +4,7 @@ const config = require('./index');
 let pool = null;
 
 const buildUrl = () => {
-  if (config.databaseUrl) return config.databaseUrl;
+  if (config.databaseUrl) {return config.databaseUrl;}
   const { host, port, user, password, database } = config.db;
   return `mysql://${user}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
 };

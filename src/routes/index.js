@@ -1,6 +1,4 @@
 const express = require('express');
-const profileModule = require('../domains/emergency-profiles');
-const contactModule = require('../domains/contacts');
 const identifierModule = require('../domains/identifiers');
 const productModule = require('../domains/products');
 const orderModule = require('../domains/orders');

@@ -27,12 +27,11 @@ const send = async ({ to, subject, html, text }) => {
     });
     return { provider: 'resend', sent: true, id: response.data && response.data.id };
   } catch (error) {
-    console.error('[EMAIL] Error de Resend:', error.message);
     return { provider: 'resend', sent: false, error: error.message };
   }
 };
 
-const renderBase = ({ title, body, preview }) => `
+const renderBase = ({ title, body }) => `
 <!DOCTYPE html>
 <html lang="es">
 <head>
