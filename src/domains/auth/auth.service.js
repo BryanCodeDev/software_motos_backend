@@ -9,30 +9,14 @@ const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const emailService = require('../../domains/email/email.service');
 const config = require('../../config');
 
-const setAuthCookies = (res, accessToken, refreshToken) => {
-  const cookieOptions = {
-    httpOnly: true,
-    sameSite: config.cookie.sameSite,
-    secure: config.cookie.secure,
-    path: '/',
-  };
-  if (config.cookie.domain) {
-    cookieOptions.domain = config.cookie.domain;
-  }
-
-  res.cookie('access_token', accessToken, {
-    ...cookieOptions,
-    maxAge: 15 * 60 * 1000,
-  });
-  res.cookie('refresh_token', refreshToken, {
-    ...cookieOptions,
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
+const setAuthTokens = (res, accessToken, refreshToken) => {
+  // Tokens se devuelven en el body de la respuesta (Bearer token, funciona cross-domain)
+  // No se usan cookies para evitar problemas de CORS entre dominios distintos.
+  return { accessToken, refreshToken };
 };
 
-const clearAuthCookies = (res) => {
-  res.clearCookie('access_token', { path: '/', ...(config.cookie.domain ? { domain: config.cookie.domain } : {}) });
-  res.clearCookie('refresh_token', { path: '/', ...(config.cookie.domain ? { domain: config.cookie.domain } : {}) });
+const clearAuthTokens = (res) => {
+  // No-op en backend: el frontend limpia localStorage en logout
 };
 
 const generateVerificationCode = () => {
@@ -114,6 +98,8 @@ const register = async (req, res) => {
 
   return res.status(201).json({
     user: { id: userId, email, name, role: role || 'user', email_verified: false },
+    accessToken,
+    refreshToken,
     requiresVerification: true,
   });
 };
@@ -158,6 +144,8 @@ const login = async (req, res) => {
       role: user.role,
       email_verified: Boolean(user.email_verified),
     },
+    accessToken,
+    refreshToken,
   });
 };
 
@@ -207,7 +195,7 @@ const resendVerification = async (req, res) => {
 };
 
 const refresh = async (req, res) => {
-  const token = req.cookies && req.cookies.refresh_token;
+  const token = req.body && req.body.refresh_token;
   if (!token) {
     return res.status(401).json({ error: 'Sesión expirada' });
   }
@@ -227,22 +215,14 @@ const refresh = async (req, res) => {
       email: payload.email,
       role: payload.role,
     });
-    res.cookie('access_token', accessToken, {
-      httpOnly: true,
-      sameSite: config.cookie.sameSite,
-      secure: config.cookie.secure,
-      path: '/',
-      maxAge: 15 * 60 * 1000,
-      ...(config.cookie.domain ? { domain: config.cookie.domain } : {}),
-    });
-    return res.json({ ok: true });
+    return res.json({ ok: true, accessToken });
   } catch (error) {
     return res.status(401).json({ error: 'Sesión inválida o expirada' });
   }
 };
 
 const logout = async (req, res) => {
-  const token = req.cookies && req.cookies.refresh_token;
+  const token = req.body && req.body.refresh_token;
   if (token) {
     try {
       const payload = verifyRefreshToken(token);
@@ -254,7 +234,7 @@ const logout = async (req, res) => {
       // ignore invalid token on logout
     }
   }
-  clearAuthCookies(res);
+  clearAuthTokens(res);
   return res.json({ ok: true });
 };
 
@@ -306,8 +286,6 @@ const resetPassword = async (req, res) => {
   await db.query('UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = ?', [
     tokens[0].user_id,
   ]);
-
-  clearAuthCookies(res);
 
   await db.query(
     'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',

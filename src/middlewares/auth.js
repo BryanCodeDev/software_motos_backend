@@ -2,7 +2,8 @@ const { verifyAccessToken } = require('../utils/jwt');
 const db = require('../config/db');
 
 const authenticate = async (req, res, next) => {
-  const token = req.cookies && req.cookies.access_token;
+  const authHeader = req.headers.authorization || '';
+  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
   if (!token) {
     return res.status(401).json({ error: 'No autenticado' });
   }
