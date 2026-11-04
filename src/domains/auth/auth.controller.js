@@ -7,8 +7,6 @@ const refresh = async (req, res) => authService.refresh(req, res);
 const logout = async (req, res) => authService.logout(req, res);
 const forgotPassword = async (req, res) => authService.forgotPassword(req, res);
 const resetPassword = async (req, res) => authService.resetPassword(req, res);
-const verifyEmail = async (req, res) => authService.verifyEmail(req, res);
-const resendVerification = async (req, res) => authService.resendVerification(req, res);
 
 module.exports = {
   register,
@@ -18,7 +16,5 @@ module.exports = {
   logout,
   forgotPassword,
   resetPassword,
-  verifyEmail,
-  resendVerification,
 };
 

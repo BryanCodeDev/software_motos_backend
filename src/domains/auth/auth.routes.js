@@ -7,8 +7,6 @@ const {
   loginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
-  verifyEmailSchema,
-  resendVerificationSchema,
 } = require('./auth.schema');
 const {
   register,
@@ -18,8 +16,6 @@ const {
   logout,
   forgotPassword,
   resetPassword,
-  verifyEmail,
-  resendVerification,
 } = require('./auth.controller');
 
 const router = express.Router();
@@ -29,8 +25,6 @@ router.post('/login', validate(loginSchema), catchAsync(login));
 router.post('/logout', catchAsync(logout));
 router.post('/refresh', catchAsync(refresh));
 router.get('/me', authenticate, catchAsync(me));
-router.post('/verify-email', validate(verifyEmailSchema), catchAsync(verifyEmail));
-router.post('/resend-verification', validate(resendVerificationSchema), catchAsync(resendVerification));
 router.post('/forgot-password', validate(forgotPasswordSchema), catchAsync(forgotPassword));
 router.post('/reset-password', validate(resetPasswordSchema), catchAsync(resetPassword));
 
