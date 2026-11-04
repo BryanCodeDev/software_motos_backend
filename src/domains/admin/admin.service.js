@@ -77,6 +77,24 @@ const updateUserRole = async (req, res) => {
   return res.json({ message: 'Rol actualizado' });
 };
 
+const verifyUser = async (req, res) => {
+  const { id } = req.params;
+  const { email_verified } = req.body;
+  if (typeof email_verified !== 'boolean') {
+    return res.status(400).json({ error: 'email_verified debe ser un booleano' });
+  }
+  const rows = await db.query('SELECT id FROM users WHERE id = ?', [id]);
+  if (rows.length === 0) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+  await db.query('UPDATE users SET email_verified = ? WHERE id = ?', [email_verified ? 1 : 0, id]);
+  await db.query(
+    'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+    [req.user.id, 'admin.user.verify_email', 'users', String(id), JSON.stringify({ email_verified }), req.ip]
+  );
+  return res.json({ message: 'Estado de verificación actualizado' });
+};
+
 const dashboardStats = async (req, res) => {
   const usersRows = await db.query('SELECT COUNT(*) AS users FROM users');
   const users = usersRows[0].users;
@@ -250,6 +268,7 @@ module.exports = {
   listUsers,
   getUser,
   updateUserRole,
+  verifyUser,
   dashboardStats,
   listOrders,
   updateOrderStatus,

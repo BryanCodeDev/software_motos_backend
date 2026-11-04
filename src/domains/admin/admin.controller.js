@@ -8,6 +8,7 @@ const bootstrapAdmin = async (req, res) => adminService.bootstrapAdmin(req, res)
 const listUsers = async (req, res) => adminService.listUsers(req, res);
 const getUser = async (req, res) => adminService.getUser(req, res);
 const updateUserRole = async (req, res) => adminService.updateUserRole(req, res);
+const verifyUser = async (req, res) => adminService.verifyUser(req, res);
 
 module.exports = {
   dashboardStats,
@@ -18,5 +19,6 @@ module.exports = {
   listUsers,
   getUser,
   updateUserRole,
+  verifyUser,
 };
 

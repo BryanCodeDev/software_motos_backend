@@ -1,5 +1,5 @@
 const db = require('../../config/db');
-const { hashPassword, comparePassword } = require('../../utils/crypto');
+const { hashPassword, comparePassword, generateToken } = require('../../utils/crypto');
 const {
   createAccessToken,
   createRefreshToken,
@@ -35,14 +35,54 @@ const clearAuthCookies = (res) => {
   res.clearCookie('refresh_token', { path: '/', ...(config.cookie.domain ? { domain: config.cookie.domain } : {}) });
 };
 
+const generateVerificationCode = () => {
+  return Math.floor(10000 + Math.random() * 90000).toString();
+};
+
+const storeVerificationCode = async (userId, code, ttlMs = 1000 * 60 * 15) => {
+  const token = generateToken();
+  const tokenHash = require('crypto').createHash('sha256').update(token).digest('hex');
+  const expiresAt = new Date(Date.now() + ttlMs);
+  await db.query(
+    'INSERT INTO email_verification_tokens (user_id, token_hash, code, expires_at) VALUES (?, ?, ?, ?)',
+    [userId, tokenHash, code, expiresAt]
+  );
+  return code;
+};
+
+const verifyVerificationCode = async (userId, code) => {
+  const rows = await db.query(
+    'SELECT id FROM email_verification_tokens WHERE user_id = ? AND code = ? AND used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC LIMIT 1',
+    [userId, code]
+  );
+  if (rows.length === 0) {
+    return false;
+  }
+  await db.query(
+    'UPDATE email_verification_tokens SET used_at = NOW() WHERE id = ?',
+    [rows[0].id]
+  );
+  return true;
+};
+
+const markEmailVerified = async (userId) => {
+  await db.query('UPDATE users SET email_verified = 1 WHERE id = ?', [userId]);
+  await db.query(
+    'UPDATE email_verification_tokens SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL',
+    [userId]
+  );
+};
+
+const sendVerificationEmail = async (user, code) => {
+  await emailService.sendEmailVerification(user.email, code);
+};
+
 const register = async (req, res) => {
   const { name, email, password } = req.validated.body;
 
-  // El registro público siempre crea un rol 'user'. El rol admin solo se
-  // asigna mediante el endpoint protegido /api/admin/bootstrap-admin.
   const role = 'user';
 
-const existing = await db.query('SELECT id FROM users WHERE email = ?', [email]);
+  const existing = await db.query('SELECT id FROM users WHERE email = ?', [email]);
   if (existing.length > 0) {
     return res.status(409).json({ error: 'El correo ya está registrado' });
   }
@@ -69,8 +109,12 @@ const existing = await db.query('SELECT id FROM users WHERE email = ?', [email])
 
   setAuthCookies(res, accessToken, refreshToken);
 
+  const code = await storeVerificationCode(userId, generateVerificationCode());
+  await sendVerificationEmail({ id: userId, email, name }, code);
+
   return res.status(201).json({
-    user: { id: userId, email, name, role: role || 'user' },
+    user: { id: userId, email, name, role: role || 'user', email_verified: false },
+    requiresVerification: true,
   });
 };
 
@@ -107,12 +151,59 @@ const login = async (req, res) => {
   setAuthCookies(res, accessToken, refreshToken);
 
   return res.json({
-    user: { id: user.id, email: user.email, name: user.name || '', role: user.role },
+    user: {
+      id: user.id,
+      email: user.email,
+      name: user.name || '',
+      role: user.role,
+      email_verified: Boolean(user.email_verified),
+    },
   });
 };
 
-const me = async (req, res) => {
-  return res.json({ user: req.user });
+const verifyEmail = async (req, res) => {
+  const { email, code } = req.validated.body;
+
+  const users = await db.query('SELECT id, email_verified FROM users WHERE email = ?', [email]);
+  if (users.length === 0) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+
+  const user = users[0];
+  if (user.email_verified === 1) {
+    return res.json({ user: { id: user.id, email, email_verified: true }, alreadyVerified: true });
+  }
+
+  const valid = await verifyVerificationCode(user.id, code);
+  if (!valid) {
+    return res.status(400).json({ error: 'Código inválido o expirado' });
+  }
+
+  await markEmailVerified(user.id);
+
+  return res.json({
+    user: { id: user.id, email, email_verified: true },
+    message: 'Correo verificado correctamente',
+  });
+};
+
+const resendVerification = async (req, res) => {
+  const { email } = req.validated.body;
+
+  const users = await db.query('SELECT id, email_verified FROM users WHERE email = ?', [email]);
+  if (users.length === 0) {
+    return res.status(404).json({ error: 'Usuario no encontrado' });
+  }
+
+  const user = users[0];
+  if (user.email_verified === 1) {
+    return res.json({ message: 'El correo ya está verificado' });
+  }
+
+  const code = await storeVerificationCode(user.id, generateVerificationCode());
+  await sendVerificationEmail({ id: user.id, email }, code);
+
+  return res.json({ message: 'Código reenviado' });
 };
 
 const refresh = async (req, res) => {
@@ -226,6 +317,10 @@ const resetPassword = async (req, res) => {
   return res.json({ message: 'Contraseña restablecida correctamente' });
 };
 
+const me = async (req, res) => {
+  return res.json({ user: req.user });
+};
+
 module.exports = {
   register,
   login,
@@ -234,5 +329,7 @@ module.exports = {
   logout,
   forgotPassword,
   resetPassword,
+  verifyEmail,
+  resendVerification,
 };
 

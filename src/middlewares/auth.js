@@ -1,6 +1,7 @@
 const { verifyAccessToken } = require('../utils/jwt');
+const db = require('../config/db');
 
-const authenticate = (req, res, next) => {
+const authenticate = async (req, res, next) => {
   const token = req.cookies && req.cookies.access_token;
   if (!token) {
     return res.status(401).json({ error: 'No autenticado' });
@@ -8,10 +9,16 @@ const authenticate = (req, res, next) => {
 
   try {
     const payload = verifyAccessToken(token);
+    const rows = await db.query('SELECT email_verified, name FROM users WHERE id = ?', [payload.sub]);
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Usuario no encontrado' });
+    }
     req.user = {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
+      email_verified: Boolean(rows[0].email_verified),
+      name: rows[0].name || '',
     };
     return next();
   } catch (error) {

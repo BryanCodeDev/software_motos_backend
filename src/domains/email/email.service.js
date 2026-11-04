@@ -95,6 +95,20 @@ Estado: ${order.status}. Te notificaremos cuando el pago se confirme y el pedido
   });
 };
 
+const sendEmailVerification = async (to, code) => {
+  return send({
+    to,
+    subject: 'Código de verificación — Tu QR te Cuida',
+    text: `Tu código de verificación es: ${code}. Expira en 15 minutos.`,
+    html: renderBase({
+      title: 'Verificación de correo electrónico',
+      body: `Tu código de verificación es <strong style="font-size:24px;letter-spacing:4px;">${code}</strong>.<br>
+Este código expira en 15 minutos. Ingrésalo en la app para activar tu cuenta.<br><br>
+Si no solicitaste este código, ignora este mensaje.`,
+    }),
+  });
+};
+
 const sendPaymentConfirmed = async (to, order) => {
   return send({
     to,
@@ -138,6 +152,7 @@ Estado: ${order.status}`,
 module.exports = {
   send,
   sendPasswordReset,
+  sendEmailVerification,
   sendOrderConfirmation,
   sendPaymentConfirmed,
   sendOrderStatusChanged,

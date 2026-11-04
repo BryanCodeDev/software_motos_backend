@@ -12,6 +12,7 @@ const {
   listUsers,
   getUser,
   updateUserRole,
+  verifyUser,
 } = require('./admin.controller');
 
 const router = express.Router();
@@ -28,6 +29,7 @@ router.get('/audit', authenticate, authorize('admin'), catchAsync(auditLogs));
 router.get('/users', authenticate, authorize('admin'), catchAsync(listUsers));
 router.get('/users/:id', authenticate, authorize('admin'), catchAsync(getUser));
 router.patch('/users/:id/role', authenticate, authorize('admin'), catchAsync(updateUserRole));
+router.patch('/users/:id/verify', authenticate, authorize('admin'), catchAsync(verifyUser));
 router.post(
   '/bootstrap-admin',
   validate(bootstrapAdminSchema),
