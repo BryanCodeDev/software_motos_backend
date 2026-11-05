@@ -254,7 +254,7 @@ async function cmdStatus() {
     const [[u]] = await conn.query(
       `SELECT COUNT(*) AS total,
               COALESCE(SUM(role = 'admin'), 0) AS admins,
-              COALESCE(SUM(1 = 1), 0) AS usuarios
+              COALESCE(SUM(email_verified = 1), 0) AS verificados
        FROM users`
     );
     const [[p]] = await conn.query(

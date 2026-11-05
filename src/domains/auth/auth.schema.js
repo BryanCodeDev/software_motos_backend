@@ -34,6 +34,19 @@ const resetPasswordSchema = z.object({
   }),
 });
 
+const verifyEmailSchema = z.object({
+  body: z.object({
+    email: emailSchema,
+    code: z.string().length(5, 'El código debe tener 5 dígitos').regex(/^\d{5}$/, 'El código debe contener solo dígitos'),
+  }),
+});
+
+const resendVerificationSchema = z.object({
+  body: z.object({
+    email: emailSchema,
+  }),
+});
+
 module.exports = {
   registerSchema,
   loginSchema,
