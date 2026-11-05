@@ -10,16 +10,16 @@ const authenticate = async (req, res, next) => {
 
   try {
     const payload = verifyAccessToken(token);
-    const rows = await db.query('SELECT name FROM users WHERE id = ?', [payload.sub]);
-    if (rows.length === 0) {
-      return res.status(401).json({ error: 'Usuario no encontrado' });
-    }
-    req.user = {
-      id: payload.sub,
-      email: payload.email,
-      role: payload.role,
-      name: rows[0].name || '',
-    };
+const rows = await db.query('SELECT id FROM users WHERE id = ?', [payload.sub]);
+if (rows.length === 0) {
+  return res.status(401).json({ error: 'Usuario no encontrado' });
+}
+req.user = {
+  id: payload.sub,
+  email: payload.email,
+  role: payload.role,
+  name: '',
+};
     return next();
   } catch (error) {
     return res.status(401).json({ error: 'Sesión inválida o expirada' });
