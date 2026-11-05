@@ -10,7 +10,7 @@ const authenticate = async (req, res, next) => {
 
   try {
     const payload = verifyAccessToken(token);
-    const rows = await db.query('SELECT email_verified, name FROM users WHERE id = ?', [payload.sub]);
+    const rows = await db.query('SELECT name FROM users WHERE id = ?', [payload.sub]);
     if (rows.length === 0) {
       return res.status(401).json({ error: 'Usuario no encontrado' });
     }
@@ -18,7 +18,6 @@ const authenticate = async (req, res, next) => {
       id: payload.sub,
       email: payload.email,
       role: payload.role,
-      email_verified: Boolean(rows[0].email_verified),
       name: rows[0].name || '',
     };
     return next();
