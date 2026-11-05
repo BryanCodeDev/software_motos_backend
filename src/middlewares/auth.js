@@ -21,7 +21,7 @@ req.user = {
   name: '',
 };
     return next();
-  } catch (error) {
+  } catch {
     return res.status(401).json({ error: 'Sesión inválida o expirada' });
   }
 };

@@ -1,9 +1,4 @@
 const express = require('express');
-const identifierModule = require('../domains/identifiers');
-const productModule = require('../domains/products');
-const orderModule = require('../domains/orders');
-const paymentModule = require('../domains/payments');
-const adminModule = require('../domains/admin');
 
 const apiRouter = express.Router();
 

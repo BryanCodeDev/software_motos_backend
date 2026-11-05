@@ -7,6 +7,7 @@ const start = async () => {
   const serverApp = createApp(routes);
 
   serverApp.listen(config.port, () => {
+    // eslint-disable-next-line no-console
     console.log(
       `[API] Servidor escuchando en http://localhost:${config.port} (${config.env})`
     );

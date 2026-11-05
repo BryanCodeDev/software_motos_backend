@@ -160,7 +160,7 @@ const createOrder = async (req, res) => {
           productName: product.name,
         });
       }
-    } catch (error) {
+    } catch {
     }
 
     return res.status(201).json({ order });

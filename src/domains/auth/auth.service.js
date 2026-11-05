@@ -1,5 +1,5 @@
 const db = require('../../config/db');
-const { hashPassword, comparePassword, generateToken } = require('../../utils/crypto');
+const { hashPassword, comparePassword } = require('../../utils/crypto');
 const {
   createAccessToken,
   createRefreshToken,
@@ -8,13 +8,7 @@ const {
 const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const config = require('../../config');
 
-const setAuthTokens = (res, accessToken, refreshToken) => {
-  // Tokens se devuelven en el body de la respuesta (Bearer token, funciona cross-domain)
-  // No se usan cookies para evitar problemas de CORS entre dominios distintos.
-  return { accessToken, refreshToken };
-};
-
-const clearAuthTokens = (res) => {
+const clearAuthTokens = () => {
   // No-op en backend: el frontend limpia localStorage en logout
 };
 
@@ -119,7 +113,7 @@ const refresh = async (req, res) => {
       role: payload.role,
     });
     return res.json({ ok: true, accessToken });
-  } catch (error) {
+  } catch {
     return res.status(401).json({ error: 'Sesión inválida o expirada' });
   }
 };
@@ -133,7 +127,7 @@ const logout = async (req, res) => {
         'UPDATE user_sessions SET revoked_at = NOW() WHERE user_id = ? AND refresh_token_hash = ?',
         [payload.sub, require('crypto').createHash('sha256').update(token).digest('hex')]
       );
-    } catch (error) {
+    } catch {
       // ignore invalid token on logout
     }
   }
@@ -156,7 +150,7 @@ const forgotPassword = async (req, res) => {
     const resetUrl = `${config.frontendUrl}/auth/reset-password?token=${token}`;
     try {
       await emailService.sendPasswordReset(email, resetUrl);
-    } catch (error) {
+    } catch {
     }
   }
 

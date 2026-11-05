@@ -299,7 +299,7 @@ const downloadQr = async (req, res) => {
           }
         }
       }
-    } catch (e) {
+    } catch {
     }
   }
   if (rows.length === 0) {
@@ -318,7 +318,7 @@ const downloadQr = async (req, res) => {
         light: '#ffffff',
       },
     });
-  } catch (error) {
+  } catch {
     return res.status(500).json({ error: 'No se pudo generar el código QR' });
   }
 

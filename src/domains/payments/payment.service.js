@@ -81,7 +81,7 @@ const createPreference = async (req, res) => {
       preference_id: pref.id,
       order_id: order.id,
     });
-  } catch (error) {
+  } catch {
     return res.status(502).json({ error: 'No se pudo crear la preferencia de pago' });
   }
 };
@@ -146,13 +146,13 @@ const mercadopagoWebhook = async (req, res) => {
   res.status(200).json({ received: true });
 
   try {
-    const { action, type, data } = req.body || {};
+    const { data } = req.body || {};
     const paymentId = data && data.id ? String(data.id) : null;
     if (!paymentId) {
       return;
     }
 
-    if (!config.mercadopago.accessToken) {
+        if (!config.mercadopago.accessToken) {
       return;
     }
 
@@ -252,10 +252,10 @@ const mercadopagoWebhook = async (req, res) => {
             currency: order.currency,
           });
         }
-      } catch (error) {
+      } catch {
       }
     }
-  } catch (error) {
+  } catch {
   }
 };
 

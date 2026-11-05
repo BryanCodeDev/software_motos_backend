@@ -215,7 +215,7 @@ const auditLogs = async (req, res) => {
 };
 
 const bootstrapAdmin = async (req, res) => {
-  const { name, email, password, token } = req.validated.body;
+  const { email, password, token } = req.validated.body;
 
   if (!process.env.ADMIN_BOOTSTRAP_TOKEN || token !== process.env.ADMIN_BOOTSTRAP_TOKEN) {
     return res.status(403).json({ error: 'Token de bootstrapping inválido' });

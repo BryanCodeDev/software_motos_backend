@@ -8,6 +8,7 @@ if (config.resend.apiKey) {
 
 const send = async ({ to, subject, html, text }) => {
   if (!resend) {
+    // eslint-disable-next-line no-console
     console.warn(
       '[EMAIL] Resend no configurado. Correo no enviado:',
       subject,

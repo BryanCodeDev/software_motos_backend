@@ -1,4 +1,4 @@
-const errorHandler = (err, req, res, next) => {
+const errorHandler = (err, _req, res) => {
   const status = err.status || 500;
   const payload = {
     error: err.message || 'Error interno del servidor',

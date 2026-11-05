@@ -3,8 +3,6 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 const { promisify } = require('util');
-const emailService = require('../../domains/email/email.service');
-const config = require('../../config');
 
 const writeFile = promisify(fs.writeFile);
 const unlink = promisify(fs.unlink);
@@ -71,9 +69,9 @@ const getOrCreateProfile = async (userId) => {
             'INSERT INTO privacy_settings (profile_id, field_name, is_public) VALUES (?, ?, 0)',
             [newId, field]
           );
-        } catch (err) {
-          // ignore duplicates
-        }
+      } catch {
+        // ignore duplicates
+      }
       }
       rows = await db.query('SELECT * FROM emergency_profiles WHERE id = ?', [
         newId,
