@@ -29,6 +29,7 @@ function runMigrate(command) {
 (async () => {
   console.log("==============================================");
   console.log("[AUTO-MIGRATE] INICIANDO MIGRACIONES AUTOMATICAS");
+  console.log("[AUTO-MIGRATE] Modo: solo migraciones (sin seed, sin reset, sin borrado de datos)");
   console.log("[AUTO-MIGRATE] NODE_ENV=" + process.env.NODE_ENV);
   console.log("[AUTO-MIGRATE] MYSQL_URL=" + (process.env.MYSQL_URL ? "[SET]" : "[NOT SET]"));
   console.log("[AUTO-MIGRATE] DATABASE_URL=" + (process.env.DATABASE_URL ? "[SET]" : "[NOT SET]"));
