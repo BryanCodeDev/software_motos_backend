@@ -36,7 +36,7 @@ WHERE p.slug = 'sticker-qr-personalizado'
   AND NOT EXISTS (SELECT 1 FROM product_variants v WHERE v.product_id = p.id AND v.name = 'Resistente');
 
 -- Usuario administrador (hash bcrypt). Cambia la contraseña desde la app tras el primer ingreso.
-INSERT INTO users (email, password_hash, role, email_verified) VALUES
-('admin@example.com', '$2a$10$RlpKgCrG/Nlx9m/AJdlO8e7qbhy48KSiCx30gdXGxag3ibBNwMcXe', 'admin', 1);
+INSERT INTO users (email, password_hash, role) VALUES
+('admin@example.com', '$2a$10$RlpKgCrG/Nlx9m/AJdlO8e7qbhy48KSiCx30gdXGxag3ibBNwMcXe', 'admin');
 
 COMMIT;

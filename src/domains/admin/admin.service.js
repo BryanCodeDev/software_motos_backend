@@ -30,7 +30,7 @@ const listUsers = async (req, res) => {
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
   const rows = await db.query(
-    'SELECT id, email, role, email_verified, created_at, updated_at FROM users ' + whereSql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    'SELECT id, email, role, created_at, updated_at FROM users ' + whereSql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?',
     params.concat([l, offset])
   );
   const countRows = await db.query('SELECT COUNT(*) AS total FROM users ' + whereSql, params);
@@ -40,7 +40,7 @@ const listUsers = async (req, res) => {
 
 const getUser = async (req, res) => {
   const { id } = req.params;
-  const rows = await db.query('SELECT id, email, role, email_verified, created_at, updated_at FROM users WHERE id = ?', [id]);
+  const rows = await db.query('SELECT id, email, role, created_at, updated_at FROM users WHERE id = ?', [id]);
   if (rows.length === 0) {
     return res.status(404).json({ error: 'Usuario no encontrado' });
   }
@@ -78,21 +78,7 @@ const updateUserRole = async (req, res) => {
 };
 
 const verifyUser = async (req, res) => {
-  const { id } = req.params;
-  const { email_verified } = req.body;
-  if (typeof email_verified !== 'boolean') {
-    return res.status(400).json({ error: 'email_verified debe ser un booleano' });
-  }
-  const rows = await db.query('SELECT id FROM users WHERE id = ?', [id]);
-  if (rows.length === 0) {
-    return res.status(404).json({ error: 'Usuario no encontrado' });
-  }
-  await db.query('UPDATE users SET email_verified = ? WHERE id = ?', [email_verified ? 1 : 0, id]);
-  await db.query(
-    'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-    [req.user.id, 'admin.user.verify_email', 'users', String(id), JSON.stringify({ email_verified }), req.ip]
-  );
-  return res.json({ message: 'Estado de verificación actualizado' });
+  return res.status(404).json({ error: 'Endpoint no disponible' });
 };
 
 const dashboardStats = async (req, res) => {
