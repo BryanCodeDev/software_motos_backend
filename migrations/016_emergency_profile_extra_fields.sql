@@ -3,8 +3,6 @@
 -- Datos médicos y de identificación críticos para primeros respondientes
 -- =====================================================
 
-USE emergency_id;
-
 ALTER TABLE emergency_profiles
   ADD COLUMN date_of_birth DATE NULL DEFAULT NULL AFTER blood_type,
   ADD COLUMN height_cm DECIMAL(5,2) NULL DEFAULT NULL AFTER date_of_birth,
