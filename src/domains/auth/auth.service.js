@@ -7,6 +7,7 @@ const {
 } = require('../../utils/jwt');
 const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const config = require('../../config');
+const { ensureOrCreatePendingQr } = require('../identifiers/identifier.service');
 
 const clearAuthTokens = () => {
   // No-op en backend: el frontend limpia localStorage en logout
@@ -34,6 +35,55 @@ const register = async (req, res) => {
     [userId, 'user.register', 'users', String(userId), JSON.stringify({ email, role }), req.ip]
   );
 
+  // Generación automática del QR permanente (estado pendiente de activación).
+  // Nunca bloquea el registro si el QR no pudiera crearse.
+  let qrInfo = null;
+  try {
+    qrInfo = await ensureOrCreatePendingQr(userId, req.ip);
+  } catch {
+    // El usuario queda registrado; el QR se generará desde administración o al activar.
+  }
+
+  const ip = req.ip;
+  const ua = req.get('User-Agent') || null;
+
+  try {
+    const { privacyService } = require('../privacy');
+    await privacyService.recordConsent(userId, {
+      documentType: 'terms',
+      documentVersion: config.documents.termsVersion,
+      accepted: true,
+      purpose: 'Aceptación de Términos y Condiciones de Uso al registrarse',
+      method: 'register',
+      ipAddress: ip,
+      userAgent: ua,
+    });
+    await privacyService.recordConsent(userId, {
+      documentType: 'privacy',
+      documentVersion: config.documents.privacyVersion,
+      accepted: true,
+      purpose: 'Conocimiento de la Política de Privacidad y Tratamiento de Datos Personales al registrarse',
+      method: 'register',
+      ipAddress: ip,
+      userAgent: ua,
+    });
+    await privacyService.recordConsent(userId, {
+      documentType: 'data_processing',
+      documentVersion: config.documents.privacyVersion,
+      accepted: true,
+      purpose: 'Autorización para el tratamiento de datos personales necesarios para operar el servicio',
+      method: 'register',
+      ipAddress: ip,
+      userAgent: ua,
+    });
+  } catch (err) {
+    // No bloquear el registro si falla el registro de consentimiento; se audita por separado.
+    await db.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, 'consent.record_failed', 'users', String(userId), JSON.stringify({ error: String(err.message) }), ip]
+    );
+  }
+
   const accessToken = createAccessToken({ sub: userId, email, role });
   const refreshToken = createRefreshToken({ sub: userId, email, role });
 
@@ -42,8 +92,17 @@ const register = async (req, res) => {
     [userId, require('crypto').createHash('sha256').update(refreshToken).digest('hex')]
   );
 
+  const userPayload = { id: userId, email, name, role: role || 'user' };
+  if (qrInfo) {
+    userPayload.qr = {
+      value: qrInfo.identifier.value,
+      status: qrInfo.identifier.status,
+      qr_url: qrInfo.qr_url,
+    };
+  }
+
   return res.status(201).json({
-    user: { id: userId, email, name, role: role || 'user' },
+    user: userPayload,
     accessToken,
     refreshToken,
   });

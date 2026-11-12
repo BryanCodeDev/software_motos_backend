@@ -4,11 +4,10 @@ const schema = require('./env.schema');
 
 const missing = schema.required.filter((key) => !process.env[key]);
 if (missing.length > 0) {
-  // eslint-disable-next-line no-console
   console.warn(
     `[ADVERTENCIA] Faltan variables de entorno requeridas: ${missing.join(
       ', '
-    )}. El sistema funcionar\u00e1 en modo de configuraci\u00f3n pendiente para las integraciones afectadas.`
+    )}. El sistema funcionará en modo de configuración pendiente para las integraciones afectadas.`
   );
 }
 
@@ -54,13 +53,24 @@ module.exports = {
     apiKey: get('RESEND_API_KEY', ''),
     from: get('EMAIL_FROM', 'no-reply@ejemplo.com'),
   },
-  appName: get('APP_NAME', 'Identificaci\u00f3n de Emergencia'),
+  appName: get('APP_NAME', 'Identificación de Emergencia'),
+  company: {
+    name: get('COMPANY_NAME', 'PENDIENTE DE CONFIGURAR'),
+    nit: get('COMPANY_NIT', 'PENDIENTE DE CONFIGURAR'),
+    address: get('COMPANY_ADDRESS', 'PENDIENTE DE CONFIGURAR'),
+    email: get('COMPANY_EMAIL', 'PENDIENTE DE CONFIGURAR'),
+    phone: get('COMPANY_PHONE', 'PENDIENTE DE CONFIGURAR'),
+    privacyEmail: get('PRIVACY_EMAIL', 'PENDIENTE DE CONFIGURAR'),
+  },
+  documents: {
+    termsVersion: get('TERMS_VERSION', '1.0'),
+    privacyVersion: get('PRIVACY_VERSION', '1.0'),
+    termsEffectiveDate: get('TERMS_EFFECTIVE_DATE', ''),
+    privacyEffectiveDate: get('PRIVACY_EFFECTIVE_DATE', ''),
+  },
   cookie: {
     secure: get('NODE_ENV', 'development') === 'production',
-    // El frontend (Netlify) y el backend (Railway) son dominios distintos,
-    // por lo que las cookies deben permitirse en peticiones cross-site.
     sameSite: get('NODE_ENV', 'development') === 'production' ? 'none' : 'lax',
     domain: get('COOKIE_DOMAIN', ''),
   },
 };
-

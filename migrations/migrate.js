@@ -1,18 +1,20 @@
 /**
  * migrate.js — Gestor de base de datos para emergency_id
  *
- * Aplica schema.sql y los archivos de migración numerados en la carpeta migrations/
- * en cada despliegue. Nunca ejecuta seed.sql y nunca elimina datos.
+ * Ya no hay migraciones incrementales: schema.sql es el esquema completo
+ * (usuarios, perfiles de emergencia, contactos, QR, pedidos, pagos,
+ * auditoría, consentimientos y solicitudes de derechos).
  *
- * Uso: node migrations/migrate.js [comando]
+ * Uso: node migrations/migrate.js [comando] [--seed]
  * Comandos:
- *   up      (por defecto) aplica schema.sql y migraciones pendientes
- *   status  muestra el estado del esquema
+ *   up      (por defecto) crea la base y aplica schema.sql si aún no existe el esquema
+ *   status  muestra el estado del esquema y filas por tabla
+ *   seed    carga seed.sql (datos de ejemplo; no permitido en producción)
+ *   reset   elimina la base y la recrea desde schema.sql (no permitido en producción)
+ *           con --seed carga además los datos de ejemplo
  *
- * Conexión (en este orden de prioridad):
- *   1. MYSQL_URL o DATABASE_URL  (mysql://user:pass@host:port/db)
- *   2. DB_HOST/DB_PORT/DB_USER/DB_PASSWORD/DB_NAME
- *   3. MYSQLHOST/MYSQLPORT/MYSQLUSER/MYSQLPASSWORD/MYSQLDATABASE
+ * Requiere: mysql2 y las variables DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
+ * (si existe dotenv, se lee también el archivo ../.env)
  */
 
 'use strict';
@@ -28,12 +30,15 @@ try {
 
 const mysql2 = require('mysql2/promise');
 
-// Directorio donde están los archivos .sql
-const SQL_DIR = fs.existsSync(path.join(__dirname, '..', 'database', 'schema.sql'))
-  ? path.join(__dirname, '..', 'database')
-  : __dirname;
+// ─── Configuración ──────────────────────────────────────────────
+const SQL_DIR = __dirname;
 const SCHEMA_FILE = 'schema.sql';
+const SEED_FILE = 'seed.sql';
 
+// Tabla marcadora para saber si el esquema ya está aplicado
+const SCHEMA_MARKER_TABLE = 'users';
+
+// ─── Conexión ────────────────────────────────────────────────────
 function getDbConfig() {
   const url = process.env.MYSQL_URL || process.env.DATABASE_URL;
   if (url && /^mysql:\/\//i.test(url)) {
@@ -69,12 +74,11 @@ function getDbConfig() {
 }
 
 function getDbName() {
-  return getDbConfig().database || 'railway';
+  return getDbConfig().database || 'emergency_id';
 }
 
 async function createConnection() {
   const { host, port, user, password } = getDbConfig();
-  console.log(`[MIGRATE] host=${host} port=${port} user=${user} db=${getDbName()}`);
   const conn = await mysql2.createConnection({
     host,
     port,
@@ -88,12 +92,27 @@ async function createConnection() {
   return conn;
 }
 
+// ─── Helpers ────────────────────────────────────────────────────
 async function ensureDatabase(conn) {
   const dbName = getDbName();
   await conn.query(
     `CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
   );
   await conn.query(`USE \`${dbName}\``);
+}
+
+async function tableExists(conn, name) {
+  const [rows] = await conn.query(
+    'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = ? AND table_name = ?',
+    [getDbName(), name]
+  );
+  return rows[0].n > 0;
+}
+
+// 'none' = sin esquema · 'current' = esquema aplicado
+async function schemaState(conn) {
+  if (await tableExists(conn, SCHEMA_MARKER_TABLE)) return 'current';
+  return 'none';
 }
 
 function readSQLFile(filename) {
@@ -104,11 +123,21 @@ function readSQLFile(filename) {
   return sql;
 }
 
+// Quita CREATE DATABASE / USE del script para que use la base configurada en DB_NAME
 function stripCreateDatabaseAndUse(sql) {
   return sql
     .replace(/^\s*CREATE\s+DATABASE\s+IF\s+NOT\s+EXISTS\s+[`\w]+[^;]*;/gim, '')
     .replace(/^\s*USE\s+[`\w]+\s*;/gim, '');
 }
+
+function assertNotProduction(action) {
+  if (process.env.NODE_ENV === 'production') {
+    console.error(`ERROR: ${action} no está permitido en producción.`);
+    process.exit(1);
+  }
+}
+
+// ─── Comandos ────────────────────────────────────────────────────
 
 async function applySchema(conn) {
   console.log(`Aplicando ${SCHEMA_FILE}...`);
@@ -116,45 +145,23 @@ async function applySchema(conn) {
   console.log('Esquema aplicado.');
 }
 
-async function applyMigrations(conn) {
-  // Tabla de control de migraciones aplicadas (idempotente)
-  await conn.query(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-      filename VARCHAR(255) NOT NULL UNIQUE,
-      applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      PRIMARY KEY (id)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-  `);
-
-  const [appliedRows] = await conn.query('SELECT filename FROM schema_migrations');
-  const appliedSet = new Set(appliedRows.map(r => r.filename));
-
-  // Archivos de migración numerados en la carpeta migrations/, excluidos schema.sql y seed.sql
-  const migrationFiles = fs
-    .readdirSync(__dirname)
-    .filter(f => f.endsWith('.sql') && f !== 'schema.sql' && f !== 'seed.sql')
-    .sort();
-
-  for (const file of migrationFiles) {
-    if (appliedSet.has(file)) {
-      console.log(`Migración ${file} ya aplicada, saltando.`);
-      continue;
-    }
-    console.log(`Aplicando migración ${file}...`);
-    await conn.query(readSQLFile(file));
-    await conn.query('INSERT INTO schema_migrations (filename) VALUES (?)', [file]);
-    console.log(`Migración ${file} aplicada.`);
-  }
+async function applySeed(conn) {
+  console.log(`Aplicando ${SEED_FILE}...`);
+  await conn.query(stripCreateDatabaseAndUse(readSQLFile(SEED_FILE)));
+  console.log('Seed aplicado correctamente.');
 }
 
 async function cmdUp() {
   const conn = await createConnection();
   try {
     await ensureDatabase(conn);
+    const state = await schemaState(conn);
+    if (state === 'current') {
+      console.log(`El esquema ya existe en "${getDbName()}". Nada que hacer.`);
+      console.log('Para recrearlo desde cero usa: node migrations/migrate.js reset');
+      return;
+    }
     await applySchema(conn);
-    await applyMigrations(conn);
-    console.log('Base de datos actualizada.');
   } finally {
     await conn.end();
   }
@@ -165,22 +172,22 @@ async function cmdStatus() {
   try {
     await ensureDatabase(conn);
     console.log(`\n=== ESTADO DE LA BASE DE DATOS (${getDbName()}) ===`);
+
+    const state = await schemaState(conn);
+    if (state === 'none') {
+      console.log('Esquema NO aplicado. Ejecuta: node migrations/migrate.js up\n');
+      return;
+    }
+
     const [tables] = await conn.query(
-      `SELECT table_name AS name FROM information_schema.tables WHERE table_schema = ? ORDER BY table_name`,
+      `SELECT table_name AS name FROM information_schema.tables
+       WHERE table_schema = ? AND table_type = 'BASE TABLE' ORDER BY table_name`,
       [getDbName()]
     );
-    console.log(`Tablas: ${tables.length}`);
-    for (const t of tables) {
-      console.log(`  ${t.name}`);
-    }
-    const [migs] = await conn.query(
-      `SELECT filename FROM schema_migrations ORDER BY applied_at`
-    ).catch(() => []);
-    if (migs.length > 0) {
-      console.log('\nMigraciones aplicadas:');
-      for (const m of migs) {
-        console.log(`  ${m.filename}`);
-      }
+    console.log(`Esquema aplicado: ${tables.length} tablas\n`);
+    for (const { name } of tables) {
+      const [[{ n }]] = await conn.query(`SELECT COUNT(*) AS n FROM \`${name}\``);
+      console.log(`  ${name.padEnd(35)} ${n}`);
     }
     console.log('');
   } finally {
@@ -188,20 +195,60 @@ async function cmdStatus() {
   }
 }
 
+async function cmdSeed() {
+  assertNotProduction('seed');
+
+  const conn = await createConnection();
+  try {
+    await ensureDatabase(conn);
+    const state = await schemaState(conn);
+    if (state === 'none') {
+      console.error('ERROR: el esquema no está aplicado. Ejecuta primero: node migrations/migrate.js up');
+      process.exit(1);
+    }
+    await applySeed(conn);
+  } finally {
+    await conn.end();
+  }
+}
+
+async function cmdReset(withSeed) {
+  assertNotProduction('reset');
+
+  const conn = await createConnection();
+  try {
+    const dbName = getDbName();
+    console.log(`Eliminando base de datos ${dbName}...`);
+    await conn.query(`DROP DATABASE IF EXISTS \`${dbName}\``);
+    console.log('Base de datos eliminada. Recreando...');
+    await ensureDatabase(conn);
+    await applySchema(conn);
+    if (withSeed) await applySeed(conn);
+    console.log('Base de datos restablecida.');
+  } finally {
+    await conn.end();
+  }
+}
+
+// ─── CLI ─────────────────────────────────────────────────────────
 const command = process.argv[2] || 'up';
+const flags = process.argv.slice(3);
 
 (async () => {
   try {
     switch (command) {
       case 'up': await cmdUp(); break;
       case 'status': await cmdStatus(); break;
+      case 'seed': await cmdSeed(); break;
+      case 'reset': await cmdReset(flags.includes('--seed')); break;
       default:
         console.error(`Comando desconocido: ${command}`);
-        console.error('Comandos disponibles: up, status');
+        console.error('Comandos disponibles: up, status, seed, reset [--seed]');
         process.exit(1);
     }
   } catch (err) {
     console.error('Error:', err.message);
+    console.error('Stack:', err.stack);
     process.exit(1);
   }
 })();

@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const db = require('../../config/db');
 const emailService = require('../../domains/email/email.service');
+const { activateQr } = require('../identifiers/identifier.service');
 
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -146,6 +147,15 @@ const createOrder = async (req, res) => {
       total_amount: totalAmount,
       currency,
     };
+
+    // Pedidos ya pagados (activación gratuita): activar el QR permanente (idempotente).
+    if (product.slug === 'qr-digital-basico' && paymentStatus === 'approved') {
+      try {
+        await activateQr(userId, result.insertId, null);
+      } catch {
+        // No bloquear la creación del pedido si la activación del QR falla.
+      }
+    }
 
     // Confirmación de pedido (transaccional: el backend verifica antes de notificar)
     try {

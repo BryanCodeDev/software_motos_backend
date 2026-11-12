@@ -28,7 +28,7 @@ for (const [k, v] of Object.entries(TEST_ENV)) {
   if (process.env[k] === undefined) process.env[k] = v;
 }
 
-const apiRouter = require('./routes');
+const apiRouter = require('./src/routes');
 const app = createApp(apiRouter);
 
 const server = http.createServer(app);

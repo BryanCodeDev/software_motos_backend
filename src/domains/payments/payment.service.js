@@ -2,6 +2,7 @@ const db = require('../../config/db');
 const mercadopago = require('mercadopago');
 const crypto = require('crypto');
 const config = require('../../config');
+const { activateQr } = require('../identifiers/identifier.service');
 
 if (config.mercadopago.accessToken) {
   mercadopago.configure({ access_token: config.mercadopago.accessToken });
@@ -240,6 +241,12 @@ const mercadopagoWebhook = async (req, res) => {
 
     // Notificación de correo solo tras verificar el estado en el backend
     if (newPaymentStatus === 'approved') {
+      // Activar el QR permanente del usuario (idempotente: reutiliza el existente).
+      try {
+        await activateQr(order.user_id, order.id, null);
+      } catch {
+        // No bloquear la notificación de pago si la activación del QR falla.
+      }
       try {
         const users = await db.query('SELECT email FROM users WHERE id = ?', [
           order.user_id,

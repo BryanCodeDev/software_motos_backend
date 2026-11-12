@@ -80,8 +80,20 @@ const resetDb = async () => {
   const schema = strip(fs.readFileSync(__dirname + '/migrations/schema.sql', 'utf8'));
   const seed = strip(fs.readFileSync(__dirname + '/migrations/seed.sql', 'utf8'));
   const split = (s) => s.split(';').map(x => x.trim()).filter(x => x.length);
-  for (const stmt of split(schema)) { await db.query(stmt); }
-  for (const stmt of split(seed)) { await db.query(stmt); }
+  const ignoreDup = (err) => err && (err.code === 'ER_DUP_KEYNAME' || err.code === 'ER_TABLE_EXISTS' || err.code === 'ER_DUP_FIELD' || err.code === 'ER_DUP_FIELDNAME' || err.errno === 1061 || err.errno === 1050 || err.errno === 1060);
+  for (const stmt of split(schema)) {
+    try { await db.query(stmt); } catch (err) { if (!ignoreDup(err)) throw err; }
+  }
+  for (const stmt of split(seed)) {
+    try { await db.query(stmt); } catch (err) { if (!ignoreDup(err)) throw err; }
+  }
+  // Garantizar columnas de permanencia/impresión aunque la tabla ya existiera sin ellas.
+  try {
+    await db.query("ALTER TABLE identifiers ADD COLUMN print_status ENUM('pending_print','sent_to_print','printed','delivered') NOT NULL DEFAULT 'pending_print' AFTER activation_at");
+  } catch (err) { if (!ignoreDup(err)) throw err; }
+  try {
+    await db.query("ALTER TABLE identifiers ADD COLUMN activation_at TIMESTAMP NULL DEFAULT NULL AFTER status");
+  } catch (err) { if (!ignoreDup(err)) throw err; }
 };
 
 module.exports = { request, extractCookie, login, dbq, dbone, signWebhook, resetDb, BASE };

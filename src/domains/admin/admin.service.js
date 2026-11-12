@@ -1,5 +1,6 @@
 const db = require('../../config/db');
 const { hashPassword } = require('../../utils/crypto');
+const { activateQr, buildPublicUrl } = require('../identifiers/identifier.service');
 
 const isAdmin = async (userId) => {
   const rows = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
@@ -12,7 +13,7 @@ const adminExists = async () => {
 };
 
 const listUsers = async (req, res) => {
-  const { q, role, page = '1', limit = '20' } = req.query;
+  const { q, role, page = '1', limit = '20', print_status } = req.query;
   const p = Math.max(1, parseInt(page, 10) || 1);
   const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (p - 1) * l;
@@ -20,20 +21,34 @@ const listUsers = async (req, res) => {
   const where = [];
   const params = [];
   if (q) {
-    where.push('(email LIKE ? OR id = ?)');
+    where.push('(u.email LIKE ? OR u.id = ?)');
     params.push('%' + q + '%', q);
   }
   if (role && ['user', 'admin'].includes(role)) {
-    where.push('role = ?');
+    where.push('u.role = ?');
     params.push(role);
+  }
+  if (print_status && ['pending_print', 'sent_to_print', 'printed', 'delivered'].includes(print_status)) {
+    where.push('i.print_status = ?');
+    params.push(print_status);
   }
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
   const rows = await db.query(
-    'SELECT id, email, role, created_at, updated_at FROM users ' + whereSql + ' ORDER BY created_at DESC LIMIT ? OFFSET ?',
+    `SELECT u.id, u.email, u.role, u.created_at, u.updated_at,
+            i.id AS qr_id, i.value AS qr_value, i.status AS qr_status,
+            i.activation_at AS qr_activation_at, i.created_at AS qr_created_at,
+            i.print_status AS qr_print_status
+     FROM users u
+     LEFT JOIN identifiers i ON i.user_id = u.id AND i.status IN ('pending_activation', 'active')
+     ${whereSql}
+     ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
     params.concat([l, offset])
   );
-  const countRows = await db.query('SELECT COUNT(*) AS total FROM users ' + whereSql, params);
+  const countRows = await db.query(
+    `SELECT COUNT(DISTINCT u.id) AS total FROM users u ${whereSql}`,
+    params
+  );
   const total = countRows[0].total;
   return res.json({ users: rows, pagination: { page: p, limit: l, total, pages: Math.ceil(total / l) } });
 };
@@ -47,7 +62,14 @@ const getUser = async (req, res) => {
   const u = rows[0];
   const orderCountRows = await db.query('SELECT COUNT(*) AS c FROM orders WHERE user_id = ?', [id]);
   const profileRows = await db.query('SELECT id, is_active FROM emergency_profiles WHERE user_id = ?', [id]);
-  return res.json({ user: { ...u, orders_count: orderCountRows[0].c, has_profile: profileRows.length > 0 } });
+  const qrRows = await db.query(
+    'SELECT id, value, status, activation_at, print_status, created_at, updated_at FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
+    [id]
+  );
+  const qr = qrRows[0]
+    ? { ...qrRows[0], qr_url: buildPublicUrl(qrRows[0].value) }
+    : null;
+  return res.json({ user: { ...u, orders_count: orderCountRows[0].c, has_profile: profileRows.length > 0, qr } });
 };
 
 const updateUserRole = async (req, res) => {
@@ -168,10 +190,11 @@ const updateOrderStatus = async (req, res) => {
     return res.status(400).json({ error: 'Estado de pago inválido' });
   }
 
-  const existing = await db.query('SELECT id FROM orders WHERE id = ?', [id]);
-  if (!existing) {
+  const existing = await db.query('SELECT id, user_id FROM orders WHERE id = ?', [id]);
+  if (!existing || existing.length === 0) {
     return res.status(404).json({ error: 'Pedido no encontrado' });
   }
+  const orderUserId = existing[0].user_id;
 
   const fields = [];
   const values = [];
@@ -194,6 +217,16 @@ const updateOrderStatus = async (req, res) => {
   }
   values.push(id);
   await db.query(`UPDATE orders SET ${fields.join(', ')} WHERE id = ?`, values);
+
+  // Activar el QR permanente del usuario cuando el pago queda aprobado (idempotente).
+  const becamePaid = payment_status === 'approved' || commercial_status === 'paid';
+  if (becamePaid) {
+    try {
+      await activateQr(orderUserId, id, req.ip);
+    } catch {
+      // No bloquear la actualización del pedido si la activación del QR falla.
+    }
+  }
 
   await db.query(
     'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',

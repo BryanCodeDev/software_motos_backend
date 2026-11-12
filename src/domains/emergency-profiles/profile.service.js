@@ -238,6 +238,13 @@ const updatePrivacy = async (req, res) => {
     conn.release();
   }
 
+  try {
+    const { recordPrivacySettingsChange } = require('../privacy');
+    await recordPrivacySettingsChange(req.user.id, req.ip, req.get('User-Agent') || null);
+  } catch (_) {
+    /* No bloquear la respuesta si falla el registro extra de consentimiento */
+  }
+
   return res.json({ message: 'Configuración de privacidad actualizada' });
 };
 
@@ -249,13 +256,19 @@ const getPublicProfile = async (req, res) => {
   );
   const idRow = idRows[0];
   if (!idRow) {
-    return res.status(404).json({ error: 'Identificador no encontrado' });
+    return res.status(404).json({ error: 'Identificador no encontrado', code: 'qr_not_found' });
+  }
+  if (idRow.status === 'pending_activation') {
+    return res.status(410).json({ error: 'Este QR todavía no está activado.', code: 'qr_pending_activation' });
+  }
+  if (idRow.status === 'disabled') {
+    return res.status(410).json({ error: 'Este QR está deshabilitado.', code: 'qr_disabled' });
   }
   if (idRow.status !== 'active') {
-    return res.status(410).json({ error: 'Identificador inactivo' });
+    return res.status(410).json({ error: 'Identificador inactivo', code: 'qr_inactive' });
   }
   if (!idRow.profile_id) {
-    return res.status(410).json({ error: 'Identificador sin perfil asociado' });
+    return res.status(410).json({ error: 'Identificador sin perfil asociado', code: 'qr_no_profile' });
   }
 
   const profiles = await db.query(
@@ -264,7 +277,7 @@ const getPublicProfile = async (req, res) => {
   );
   const profile = profiles[0];
   if (!profile || !profile.is_active) {
-    return res.status(410).json({ error: 'Perfil desactivado' });
+    return res.status(410).json({ error: 'Perfil desactivado', code: 'qr_profile_disabled' });
   }
 
   const privacy = await getPrivacyMap(profile.id);

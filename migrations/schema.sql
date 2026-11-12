@@ -118,22 +118,28 @@ CREATE TABLE IF NOT EXISTS privacy_settings (
   CONSTRAINT fk_privacy_settings_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 007: Identificadores QR
+-- 007: Identificadores QR (permanentes por usuario)
 CREATE TABLE IF NOT EXISTS identifiers (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id INT UNSIGNED NOT NULL,
   profile_id INT UNSIGNED NULL DEFAULT NULL,
   order_id INT UNSIGNED NULL DEFAULT NULL,
   value VARCHAR(80) NOT NULL,
-  status ENUM('active', 'deactivated', 'replaced') NOT NULL DEFAULT 'active',
+  status ENUM('pending_activation', 'active', 'disabled', 'deactivated', 'replaced') NOT NULL DEFAULT 'pending_activation',
+  activation_at TIMESTAMP NULL DEFAULT NULL,
+  print_status ENUM('pending_print', 'sent_to_print', 'printed', 'delivered') NOT NULL DEFAULT 'pending_print',
   replaced_by_id INT UNSIGNED NULL DEFAULT NULL,
   deactivated_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  _one_active_per_user INT UNSIGNED AS (CASE WHEN status IN ('pending_activation', 'active') THEN user_id END) VIRTUAL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_identifiers_value (value),
+  UNIQUE KEY uq_identifiers_one_active_per_user (_one_active_per_user),
   KEY idx_identifiers_user (user_id),
   KEY idx_identifiers_status (status),
+  KEY idx_identifiers_print_status (print_status),
+  KEY idx_identifiers_user_print (user_id, print_status),
   KEY idx_identifiers_profile (profile_id),
   KEY idx_identifiers_order (order_id),
   CONSTRAINT fk_identifiers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -280,5 +286,62 @@ CREATE TABLE IF NOT EXISTS alert_events (
   CONSTRAINT fk_alert_events_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_alert_events_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 016: Versiones de documentos legales
+CREATE TABLE IF NOT EXISTS legal_document_versions (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  document_type ENUM('terms', 'privacy') NOT NULL,
+  version VARCHAR(20) NOT NULL,
+  title VARCHAR(200) NOT NULL,
+  effective_date DATE NOT NULL,
+  content_summary TEXT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_legal_document_versions_type_version (document_type, version),
+  KEY idx_legal_document_versions_active (document_type, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 017: Registros de consentimiento del usuario
+CREATE TABLE IF NOT EXISTS consent_records (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  document_type ENUM('terms', 'privacy', 'data_processing', 'sensitive_data', 'notifications') NOT NULL,
+  document_version VARCHAR(20) NULL,
+  accepted TINYINT(1) NOT NULL DEFAULT 0,
+  purpose TEXT NULL,
+  method ENUM('register', 'privacy_center', 'profile_update', 'admin_update') NOT NULL DEFAULT 'register',
+  ip_address VARCHAR(45) NULL,
+  user_agent VARCHAR(500) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_consent_records_user (user_id),
+  KEY idx_consent_records_type (document_type),
+  KEY idx_consent_records_created (created_at),
+  CONSTRAINT fk_consent_records_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 018: Solicitudes de derechos de los titulares
+CREATE TABLE IF NOT EXISTS data_requests (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id INT UNSIGNED NOT NULL,
+  request_type ENUM('access', 'rectification', 'suppression', 'portability', 'revocation', 'consultation') NOT NULL,
+  status ENUM('pending', 'in_review', 'completed', 'rejected') NOT NULL DEFAULT 'pending',
+  details TEXT NULL,
+  response TEXT NULL,
+  responded_by INT UNSIGNED NULL,
+  responded_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_data_requests_user (user_id),
+  KEY idx_data_requests_status (status),
+  KEY idx_data_requests_type (request_type),
+  CONSTRAINT fk_data_requests_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_data_requests_responder FOREIGN KEY (responded_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Índice para evitar solicitudes duplicadas recientes del mismo tipo por usuario
+CREATE INDEX idx_data_requests_user_type_status ON data_requests(user_id, request_type, status);
 
 SET FOREIGN_KEY_CHECKS = 1;

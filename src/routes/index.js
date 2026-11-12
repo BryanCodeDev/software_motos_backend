@@ -25,6 +25,7 @@ apiRouter.use('/products', require('../domains/products/product.routes'));
 apiRouter.use('/', require('../domains/payments/payment.routes'));
 apiRouter.use('/payments', require('../domains/payments/payment.routes'));
 apiRouter.use('/admin', require('../domains/admin/admin.routes'));
+apiRouter.use('/privacy', require('../domains/privacy/privacy.routes'));
 
 module.exports = apiRouter;
 
