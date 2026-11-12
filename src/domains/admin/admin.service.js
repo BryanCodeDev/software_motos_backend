@@ -18,39 +18,53 @@ const listUsers = async (req, res) => {
   const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (p - 1) * l;
 
-  const where = [];
-  const params = [];
-  if (q) {
-    where.push('(u.email LIKE ? OR u.id = ?)');
-    params.push('%' + q + '%', q);
-  }
-  if (role && ['user', 'admin'].includes(role)) {
-    where.push('u.role = ?');
-    params.push(role);
-  }
-  if (print_status && ['pending_print', 'sent_to_print', 'printed', 'delivered'].includes(print_status)) {
-    where.push('i.print_status = ?');
-    params.push(print_status);
-  }
-  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const run = async (usePrintFilter) => {
+    const where = [];
+    const params = [];
+    if (q) {
+      where.push('(u.email LIKE ? OR u.id = ?)');
+      params.push('%' + q + '%', q);
+    }
+    if (role && ['user', 'admin'].includes(role)) {
+      where.push('u.role = ?');
+      params.push(role);
+    }
+    if (usePrintFilter && print_status && ['pending_print', 'sent_to_print', 'printed', 'delivered'].includes(print_status)) {
+      where.push('i.print_status = ?');
+      params.push(print_status);
+    }
+    const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const printCol = usePrintFilter ? 'i.print_status AS qr_print_status,' : '';
+    const rows = await db.query(
+      `SELECT u.id, u.email, u.role, u.created_at, u.updated_at,
+              i.id AS qr_id, i.value AS qr_value, i.status AS qr_status,
+              i.activation_at AS qr_activation_at, i.created_at AS qr_created_at,
+              ${printCol} NULL AS qr_print_status
+       FROM users u
+       LEFT JOIN identifiers i ON i.user_id = u.id AND i.status IN ('pending_activation', 'active')
+       ${whereSql}
+       ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
+      params.concat([l, offset])
+    );
+    const countRows = await db.query(
+      `SELECT COUNT(DISTINCT u.id) AS total FROM users u ${whereSql}`,
+      params
+    );
+    return { users: rows, total: countRows[0].total };
+  };
 
-  const rows = await db.query(
-    `SELECT u.id, u.email, u.role, u.created_at, u.updated_at,
-            i.id AS qr_id, i.value AS qr_value, i.status AS qr_status,
-            i.activation_at AS qr_activation_at, i.created_at AS qr_created_at,
-            i.print_status AS qr_print_status
-     FROM users u
-     LEFT JOIN identifiers i ON i.user_id = u.id AND i.status IN ('pending_activation', 'active')
-     ${whereSql}
-     ORDER BY u.created_at DESC LIMIT ? OFFSET ?`,
-    params.concat([l, offset])
-  );
-  const countRows = await db.query(
-    `SELECT COUNT(DISTINCT u.id) AS total FROM users u ${whereSql}`,
-    params
-  );
-  const total = countRows[0].total;
-  return res.json({ users: rows, pagination: { page: p, limit: l, total, pages: Math.ceil(total / l) } });
+  let result;
+  try {
+    result = await run(true);
+  } catch (err) {
+    const isUnknownCol = err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054 || /Unknown column/.test(String(err.message || '')));
+    if (!isUnknownCol || !print_status) throw err;
+    // BD sin columna print_status: reintentar sin filtro ni columna de impresión
+    result = await run(false);
+  }
+
+  const { users, total } = result;
+  return res.json({ users, pagination: { page: p, limit: l, total, pages: Math.ceil(total / l) } });
 };
 
 const getUser = async (req, res) => {
