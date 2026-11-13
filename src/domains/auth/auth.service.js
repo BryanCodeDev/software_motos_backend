@@ -7,7 +7,6 @@ const {
 } = require('../../utils/jwt');
 const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const config = require('../../config');
-const { ensureOrCreatePendingQr } = require('../identifiers/identifier.service');
 
 const clearAuthTokens = () => {
   // No-op en backend: el frontend limpia localStorage en logout
@@ -35,13 +34,17 @@ const register = async (req, res) => {
     [userId, 'user.register', 'users', String(userId), JSON.stringify({ email, role }), req.ip]
   );
 
-  // Generación automática del QR permanente (estado pendiente de activación).
-  // Nunca bloquea el registro si el QR no pudiera crearse.
-  let qrInfo = null;
+  // El registro de una cuenta NO genera un QR físico ni consume inventario.
+  // Se crea el perfil de emergencia vacío para que el usuario complete su
+  // información y privacidad sin comprar. El QR definitivo se asigna o genera
+  // cuando el usuario realiza una compra de stickers.
   try {
-    qrInfo = await ensureOrCreatePendingQr(userId, req.ip);
-  } catch {
-    // El usuario queda registrado; el QR se generará desde administración o al activar.
+    await db.query(
+      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+      [userId, '']
+    );
+  } catch (err) {
+    if (err.code !== 'ER_DUP_ENTRY') throw err;
   }
 
   const ip = req.ip;
@@ -93,13 +96,6 @@ const register = async (req, res) => {
   );
 
   const userPayload = { id: userId, email, name, role: role || 'user' };
-  if (qrInfo) {
-    userPayload.qr = {
-      value: qrInfo.identifier.value,
-      status: qrInfo.identifier.status,
-      qr_url: qrInfo.qr_url,
-    };
-  }
 
   return res.status(201).json({
     user: userPayload,

@@ -850,4 +850,5 @@ module.exports = {
   bulkUpdatePrintStatus,
   ensureOrCreatePendingQr,
   activateQr,
+  ensureProfileTx,
 };

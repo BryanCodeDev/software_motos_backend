@@ -206,11 +206,17 @@ const updateOrderStatus = async (req, res) => {
     return res.status(400).json({ error: 'Estado de pago inválido' });
   }
 
-  const existing = await db.query('SELECT id, user_id FROM orders WHERE id = ?', [id]);
+  const existing = await db.query('SELECT id, user_id, design_id FROM orders WHERE id = ?', [id]);
   if (!existing || existing.length === 0) {
     return res.status(404).json({ error: 'Pedido no encontrado' });
   }
   const orderUserId = existing[0].user_id;
+  const orderDesignId = existing[0].design_id;
+
+  // Para pedidos de stickers físicos (tienen design_id), el QR físico se asigna/genera
+  // desde el webhook de pago (assignOrCreateForOrder), no desde la edición manual del
+  // pedido. activateQr se reserva para el flujo del QR digital básico.
+  const isStickerOrder = orderDesignId !== null;
 
   const fields = [];
   const values = [];
@@ -235,8 +241,9 @@ const updateOrderStatus = async (req, res) => {
   await db.query(`UPDATE orders SET ${fields.join(', ')} WHERE id = ?`, values);
 
   // Activar el QR permanente del usuario cuando el pago queda aprobado (idempotente).
+  // Se omite para pedidos de stickers físicos: su QR físico se gestiona por compra/inventario.
   const becamePaid = payment_status === 'approved' || commercial_status === 'paid';
-  if (becamePaid) {
+  if (becamePaid && !isStickerOrder) {
     try {
       await activateQr(orderUserId, id, req.ip);
     } catch {

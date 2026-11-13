@@ -130,6 +130,7 @@ CREATE TABLE IF NOT EXISTS identifiers (
   print_status ENUM('pending_print', 'sent_to_print', 'printed', 'delivered') NOT NULL DEFAULT 'pending_print',
   replaced_by_id INT UNSIGNED NULL DEFAULT NULL,
   deactivated_at TIMESTAMP NULL DEFAULT NULL,
+  package_id INT UNSIGNED NULL DEFAULT NULL COMMENT 'Paquete físico de sticker del cual proviene este identificador',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   _one_active_per_user INT UNSIGNED AS (CASE WHEN status IN ('pending_activation', 'active') THEN user_id END) VIRTUAL,
@@ -142,10 +143,12 @@ CREATE TABLE IF NOT EXISTS identifiers (
   KEY idx_identifiers_user_print (user_id, print_status),
   KEY idx_identifiers_profile (profile_id),
   KEY idx_identifiers_order (order_id),
+  KEY idx_identifiers_package (package_id),
   CONSTRAINT fk_identifiers_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT fk_identifiers_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE SET NULL,
   CONSTRAINT fk_identifiers_replaced_by FOREIGN KEY (replaced_by_id) REFERENCES identifiers(id) ON DELETE SET NULL,
-  CONSTRAINT fk_identifiers_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+  CONSTRAINT fk_identifiers_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
+  CONSTRAINT fk_identifiers_package FOREIGN KEY (package_id) REFERENCES qr_inventory_packages(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 008: Productos
@@ -193,6 +196,8 @@ CREATE TABLE IF NOT EXISTS orders (
   design_name VARCHAR(150) NULL DEFAULT NULL,
   design_image_url VARCHAR(500) NULL DEFAULT NULL,
   sticker_quantity INT UNSIGNED NOT NULL DEFAULT 2,
+  inventory_origin ENUM('inventory', 'on_demand') NULL DEFAULT NULL COMMENT 'Origen del QR asignado: inventario físico anticipado o producción bajo pedido',
+  package_id INT UNSIGNED NULL DEFAULT NULL COMMENT 'Paquete físico de sticker asignado al pedido',
   commercial_status ENUM('draft', 'pending_confirmation', 'pending_payment', 'paid', 'preparing', 'shipped', 'delivered', 'cancelled', 'refund_requested', 'refunded') NOT NULL DEFAULT 'draft',
   payment_status ENUM('unpaid', 'pending', 'approved', 'rejected', 'cancelled', 'refunded') NOT NULL DEFAULT 'unpaid',
   total_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
@@ -211,7 +216,8 @@ CREATE TABLE IF NOT EXISTS orders (
   CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id),
   CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products(id),
   CONSTRAINT fk_orders_variant FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE SET NULL,
-  CONSTRAINT fk_orders_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL
+  CONSTRAINT fk_orders_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL,
+  CONSTRAINT fk_orders_package FOREIGN KEY (package_id) REFERENCES qr_inventory_packages(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 011: Ítems de pedido
@@ -370,5 +376,64 @@ CREATE TABLE IF NOT EXISTS product_designs (
 
 -- Índice para consultas rápidas de diseños por pedido
 CREATE INDEX idx_orders_design ON orders(design_id);
+CREATE INDEX idx_orders_package ON orders(package_id);
+CREATE INDEX idx_orders_inventory_origin ON orders(inventory_origin);
+
+-- 020: Lotes de producción de inventario físico de stickers QR
+CREATE TABLE IF NOT EXISTS qr_inventory_batches (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  batch_code VARCHAR(40) NOT NULL,
+  design_id INT UNSIGNED NOT NULL,
+  quantity_requested INT UNSIGNED NOT NULL DEFAULT 0,
+  quantity_confirmed INT UNSIGNED NOT NULL DEFAULT 0,
+  status ENUM('pending_generation', 'generated', 'pending_print', 'printed', 'confirmed_received', 'cancelled') NOT NULL DEFAULT 'pending_generation',
+  created_by INT UNSIGNED NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      confirmed_at TIMESTAMP NULL DEFAULT NULL,
+      notes VARCHAR(500) NULL DEFAULT NULL,
+      PRIMARY KEY (id),
+  UNIQUE KEY uk_qr_inventory_batches_code (batch_code),
+  KEY idx_qr_inventory_batches_design (design_id),
+  KEY idx_qr_inventory_batches_status (status),
+  CONSTRAINT fk_qr_inventory_batches_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_qr_inventory_batches_creator FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 021: Paquetes físicos de stickers QR (inventario real de stickers)
+CREATE TABLE IF NOT EXISTS qr_inventory_packages (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  package_code VARCHAR(40) NOT NULL,
+  batch_id INT UNSIGNED NULL DEFAULT NULL,
+  design_id INT UNSIGNED NOT NULL,
+  identifier_id INT UNSIGNED NULL DEFAULT NULL,
+  value VARCHAR(80) NOT NULL,
+  public_url VARCHAR(500) NOT NULL,
+  status ENUM('available', 'reserved', 'assigned', 'in_production', 'printed', 'dispatched', 'delivered', 'cancelled', 'retired') NOT NULL DEFAULT 'available',
+  user_id INT UNSIGNED NULL DEFAULT NULL,
+  order_id INT UNSIGNED NULL DEFAULT NULL,
+  origin ENUM('inventory', 'on_demand') NOT NULL DEFAULT 'inventory',
+  quantity_stickers INT UNSIGNED NOT NULL DEFAULT 2,
+  reserved_until TIMESTAMP NULL DEFAULT NULL,
+  printed_at TIMESTAMP NULL DEFAULT NULL,
+  dispatched_at TIMESTAMP NULL DEFAULT NULL,
+  delivered_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_qr_inventory_packages_code (package_code),
+  UNIQUE KEY uk_qr_inventory_packages_value (value),
+  KEY idx_qr_inventory_packages_design_status (design_id, status),
+  KEY idx_qr_inventory_packages_status_reserved (status, reserved_until),
+  KEY idx_qr_inventory_packages_user (user_id),
+  KEY idx_qr_inventory_packages_order (order_id),
+  KEY idx_qr_inventory_packages_batch (batch_id),
+  KEY idx_qr_inventory_packages_origin (origin, status),
+  CONSTRAINT fk_qr_inventory_packages_batch FOREIGN KEY (batch_id) REFERENCES qr_inventory_batches(id) ON DELETE SET NULL,
+  CONSTRAINT fk_qr_inventory_packages_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE RESTRICT,
+  CONSTRAINT fk_qr_inventory_packages_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL,
+  CONSTRAINT fk_qr_inventory_packages_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
+  CONSTRAINT fk_qr_inventory_packages_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

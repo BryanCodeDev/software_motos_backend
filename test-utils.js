@@ -3,7 +3,7 @@ const https = require('https');
 const crypto = require('crypto');
 const db = require('./src/config/db');
 
-const BASE = 'http://localhost:4001';
+const BASE = process.env.TEST_BASE_URL || 'http://localhost:4001';
 
 const request = (method, path, { body, headers = {}, cookie } = {}) =>
   new Promise((resolve, reject) => {
@@ -68,15 +68,16 @@ const signWebhook = (dataId, requestId, ts, secret) => {
 };
 
 const resetDb = async () => {
+  const dbName = process.env.DB_NAME || 'emergency_id_test';
   const conn = await db.getConnection();
   try {
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');
-    const [tables] = await conn.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'emergency_id_test'");
+    const [tables] = await conn.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", [dbName]);
     for (const t of tables) { await conn.query('DROP TABLE IF EXISTS `' + t.TABLE_NAME + '`'); }
     await conn.query('SET FOREIGN_KEY_CHECKS = 1');
   } finally { conn.release(); }
   const fs = require('fs');
-  const strip = (s) => s.replace(/USE\s+emergency_id_test\s*;/gi, '').replace(/USE\s+emergency_id\s*;/gi, '');
+  const strip = (s) => s.replace(/USE\s+`[^`]+`\s*;/gi, '').replace(/USE\s+[`\w]+\s*;/gi, '');
   const schema = strip(fs.readFileSync(__dirname + '/migrations/schema.sql', 'utf8'));
   const seed = strip(fs.readFileSync(__dirname + '/migrations/seed.sql', 'utf8'));
   const split = (s) => s.split(';').map(x => x.trim()).filter(x => x.length);

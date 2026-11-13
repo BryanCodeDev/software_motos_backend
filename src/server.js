@@ -19,6 +19,13 @@ const start = async () => {
     console.warn('[DISEÑOS] No se pudieron sincronizar diseños/pedidos:', err.message);
   }
 
+  // Sincronizar tablas de inventario físico de stickers QR en BDs existentes.
+  try {
+    await db.ensureInventorySchema();
+  } catch (err) {
+    console.warn('[INVENTARIO] No se pudieron sincronizar tablas de inventario QR:', err.message);
+  }
+
   const routes = require('./routes');
   const serverApp = createApp(routes);
 

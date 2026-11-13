@@ -26,7 +26,12 @@ apiRouter.use('/designs', require('../domains/designs/design.routes'));
 apiRouter.use('/', require('../domains/payments/payment.routes'));
 apiRouter.use('/payments', require('../domains/payments/payment.routes'));
 apiRouter.use('/admin', require('../domains/admin/admin.routes'));
+apiRouter.use('/admin/qr-inventory', require('../domains/qr-inventory/qr-inventory.routes'));
 apiRouter.use('/privacy', require('../domains/privacy/privacy.routes'));
+
+// Ruta pública del QR: GET /api/e/:identifier (alias de /api/profiles/public/:identifier).
+// Conserva la URL permanente /e/:identifier que imprime cada sticker y QR.
+apiRouter.get('/e/:identifier', require('../domains/emergency-profiles/profile.controller').getPublicProfile);
 
 module.exports = apiRouter;
 

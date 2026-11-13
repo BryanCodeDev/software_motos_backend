@@ -256,7 +256,22 @@ const getPublicProfile = async (req, res) => {
   );
   const idRow = idRows[0];
   if (!idRow) {
-    return res.status(404).json({ error: 'Identificador no encontrado', code: 'qr_not_found' });
+    // Puede tratarse de un paquete de inventario físico aún sin asignar a un usuario.
+    // Devolver una respuesta controlada sin exponer datos personales.
+    const pkgRows = await db.query(
+      'SELECT status, user_id, origin FROM qr_inventory_packages WHERE value = ? LIMIT 1',
+      [identifier]
+    );
+    const pkg = pkgRows[0];
+    if (!pkg) {
+      return res.status(404).json({ error: 'Identificador no encontrado', code: 'qr_not_found' });
+    }
+    return res.status(410).json({
+      error: pkg.user_id
+        ? 'Este QR está asignado pero todavía no tiene perfil público.'
+        : 'Este código QR todavía no está asociado a un perfil de emergencia.',
+      code: 'qr_not_assigned',
+    });
   }
   if (idRow.status === 'pending_activation') {
     return res.status(410).json({ error: 'Este QR todavía no está activado.', code: 'qr_pending_activation' });
