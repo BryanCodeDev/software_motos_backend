@@ -246,4 +246,5 @@ module.exports = {
   ensureIdentifierColumns,
   ensureDesignAndOrderColumns,
   ensureInventorySchema,
+  ensurePrivacySchema,
 };

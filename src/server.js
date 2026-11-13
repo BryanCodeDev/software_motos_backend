@@ -26,6 +26,14 @@ const start = async () => {
     console.warn('[INVENTARIO] No se pudieron sincronizar tablas de inventario QR:', err.message);
   }
 
+  // Sincronizar tablas de privacidad (consentimientos y solicitudes de datos)
+  // en BDs existentes creadas con versiones anteriores del esquema.
+  try {
+    await db.ensurePrivacySchema();
+  } catch (err) {
+    console.warn('[PRIVACIDAD] No se pudieron sincronizar tablas de privacidad:', err.message);
+  }
+
   const routes = require('./routes');
   const serverApp = createApp(routes);
 
