@@ -176,6 +176,58 @@ const ensureInventorySchema = async () => {
   }
 };
 
+// Garantiza las tablas de privacidad (consentimientos y solicitudes de datos)
+// en bases de datos creadas con versiones anteriores del esquema que no las
+// incluían. Usa CREATE TABLE IF NOT EXISTS, por lo que es idempotente y seguro
+// de ejecutar en cada arranque.
+const ensurePrivacySchema = async () => {
+  const createConsentRecords = `
+    CREATE TABLE IF NOT EXISTS consent_records (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id INT UNSIGNED NOT NULL,
+      document_type ENUM('terms', 'privacy', 'data_processing', 'sensitive_data', 'notifications') NOT NULL,
+      document_version VARCHAR(20) NULL,
+      accepted TINYINT(1) NOT NULL DEFAULT 0,
+      purpose TEXT NULL,
+      method ENUM('register', 'privacy_center', 'profile_update', 'admin_update') NOT NULL DEFAULT 'register',
+      ip_address VARCHAR(45) NULL,
+      user_agent VARCHAR(500) NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_consent_records_user (user_id),
+      KEY idx_consent_records_type (document_type),
+      KEY idx_consent_records_created (created_at),
+      CONSTRAINT fk_consent_records_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+  const createDataRequests = `
+    CREATE TABLE IF NOT EXISTS data_requests (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      user_id INT UNSIGNED NOT NULL,
+      request_type ENUM('access', 'rectification', 'suppression', 'portability', 'revocation', 'consultation') NOT NULL,
+      status ENUM('pending', 'in_review', 'completed', 'rejected') NOT NULL DEFAULT 'pending',
+      details TEXT NULL,
+      response TEXT NULL,
+      responded_by INT UNSIGNED NULL,
+      responded_at TIMESTAMP NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_data_requests_user (user_id),
+      KEY idx_data_requests_status (status),
+      KEY idx_data_requests_type (request_type),
+      CONSTRAINT fk_data_requests_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      CONSTRAINT fk_data_requests_responder FOREIGN KEY (responded_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `;
+  const createIndex = `
+    CREATE INDEX idx_data_requests_user_type_status ON data_requests(user_id, request_type, status)
+  `;
+  try { await query(createConsentRecords); } catch (e) { if (!ignoreDup(e)) throw e; }
+  try { await query(createDataRequests); } catch (e) { if (!ignoreDup(e)) throw e; }
+  try { await query(createIndex); } catch (e) { if (!ignoreDup(e)) throw e; }
+};
+
 const getConnection = async () => getPool().getConnection();
 
 const close = async () => {

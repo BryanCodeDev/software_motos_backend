@@ -155,12 +155,10 @@ async function cmdUp() {
   const conn = await createConnection();
   try {
     await ensureDatabase(conn);
-    const state = await schemaState(conn);
-    if (state === 'current') {
-      console.log(`El esquema ya existe en "${getDbName()}". Nada que hacer.`);
-      console.log('Para recrearlo desde cero usa: node migrations/migrate.js reset');
-      return;
-    }
+    // schema.sql usa CREATE TABLE IF NOT EXISTS para todas las tablas, por lo que
+    // aplicarlo siempre es idempotente y crea las tablas que faltasen (p. ej. en
+    // bases creadas con versiones anteriores del esquema que no incluían
+    // consent_records, data_requests, qr_inventory_*, etc.).
     await applySchema(conn);
   } finally {
     await conn.end();
