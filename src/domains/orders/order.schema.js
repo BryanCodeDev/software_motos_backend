@@ -13,6 +13,7 @@ const shippingAddressSchema = z.object({
 const orderSchema = z.object({
   body: z.object({
     product_id: z.coerce.number().int().positive(),
+    design_id: z.coerce.number().int().positive().optional().nullable(),
     variant_id: z.coerce.number().int().positive().optional().nullable(),
     shipping_address: shippingAddressSchema.optional().nullable(),
     customization: z.object({}).optional().nullable(),
@@ -20,4 +21,3 @@ const orderSchema = z.object({
 });
 
 module.exports = { orderSchema };
-

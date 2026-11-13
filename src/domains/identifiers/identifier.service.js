@@ -571,7 +571,7 @@ const buildQrCsv = (records) => {
     }
     return s;
   };
-  const header = ['registro','identificador_qr','url_publica','estado_qr','usuario_id','correo_usuario','fecha_generacion','estado_impresion'];
+  const header = ['registro','identificador_qr','url_publica','estado_qr','usuario_id','correo_usuario','fecha_generacion','estado_impresion','pedido_referencia','diseno_seleccionado','diseno_nombre','cantidad_stickers'];
   const lines = [header.join(',')];
   records.forEach((r, i) => {
     lines.push([
@@ -583,6 +583,10 @@ const buildQrCsv = (records) => {
       esc(r.email),
       esc(r.created_at),
       esc(r.print_status),
+      esc(r.order_number),
+      esc(r.design_id),
+      esc(r.design_name),
+      esc(r.sticker_quantity),
     ].join(','));
   });
   return lines.join('\n') + '\n';
@@ -600,9 +604,12 @@ const exportQrsCsv = async (req, res) => {
 
   const placeholders = idList.map(() => '?').join(',');
   const rows = await db.query(
-    `SELECT i.id, i.user_id, i.value, i.status, i.created_at, i.print_status, u.email
+    `SELECT i.id, i.user_id, i.value, i.status, i.created_at, i.print_status, i.order_id,
+            o.order_number, o.design_id, o.design_name, o.sticker_quantity,
+            u.email
      FROM identifiers i
      JOIN users u ON u.id = i.user_id
+     LEFT JOIN orders o ON o.id = i.order_id
      WHERE i.user_id IN (${placeholders})
      ORDER BY i.created_at DESC`,
     idList
@@ -630,9 +637,12 @@ const exportQrsZip = async (req, res) => {
 
   const placeholders = idList.map(() => '?').join(',');
   const rows = await db.query(
-    `SELECT i.id, i.user_id, i.value, i.status, i.print_status, u.email
+    `SELECT i.id, i.user_id, i.value, i.status, i.print_status, i.order_id,
+            o.order_number, o.design_id, o.design_name, o.sticker_quantity,
+            u.email
      FROM identifiers i
      JOIN users u ON u.id = i.user_id
+     LEFT JOIN orders o ON o.id = i.order_id
      WHERE i.user_id IN (${placeholders})`,
     idList
   );

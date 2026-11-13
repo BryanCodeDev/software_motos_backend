@@ -189,6 +189,10 @@ CREATE TABLE IF NOT EXISTS orders (
   user_id INT UNSIGNED NOT NULL,
   product_id INT UNSIGNED NOT NULL,
   variant_id INT UNSIGNED NULL DEFAULT NULL,
+  design_id INT UNSIGNED NULL DEFAULT NULL,
+  design_name VARCHAR(150) NULL DEFAULT NULL,
+  design_image_url VARCHAR(500) NULL DEFAULT NULL,
+  sticker_quantity INT UNSIGNED NOT NULL DEFAULT 2,
   commercial_status ENUM('draft', 'pending_confirmation', 'pending_payment', 'paid', 'preparing', 'shipped', 'delivered', 'cancelled', 'refund_requested', 'refunded') NOT NULL DEFAULT 'draft',
   payment_status ENUM('unpaid', 'pending', 'approved', 'rejected', 'cancelled', 'refunded') NOT NULL DEFAULT 'unpaid',
   total_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
@@ -206,7 +210,8 @@ CREATE TABLE IF NOT EXISTS orders (
   KEY idx_orders_payment_status (payment_status),
   CONSTRAINT fk_orders_user FOREIGN KEY (user_id) REFERENCES users(id),
   CONSTRAINT fk_orders_product FOREIGN KEY (product_id) REFERENCES products(id),
-  CONSTRAINT fk_orders_variant FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE SET NULL
+  CONSTRAINT fk_orders_variant FOREIGN KEY (variant_id) REFERENCES product_variants(id) ON DELETE SET NULL,
+  CONSTRAINT fk_orders_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 011: Ítems de pedido
@@ -343,5 +348,27 @@ CREATE TABLE IF NOT EXISTS data_requests (
 
 -- Índice para evitar solicitudes duplicadas recientes del mismo tipo por usuario
 CREATE INDEX idx_data_requests_user_type_status ON data_requests(user_id, request_type, status);
+
+-- 019: Diseños de stickers (plantillas gráficas del catálogo)
+CREATE TABLE IF NOT EXISTS product_designs (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  product_id INT UNSIGNED NOT NULL,
+  name VARCHAR(100) NOT NULL,
+  slug VARCHAR(120) NOT NULL,
+  description TEXT NULL DEFAULT NULL,
+  image_url VARCHAR(500) NULL DEFAULT NULL,
+  is_available TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_product_designs_slug (slug),
+  KEY idx_product_designs_product (product_id),
+  KEY idx_product_designs_available (product_id, is_available, sort_order),
+  CONSTRAINT fk_product_designs_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Índice para consultas rápidas de diseños por pedido
+CREATE INDEX idx_orders_design ON orders(design_id);
 
 SET FOREIGN_KEY_CHECKS = 1;

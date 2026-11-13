@@ -12,6 +12,13 @@ const start = async () => {
     console.warn('[QR] No se pudieron sincronizar columnas de identifiers:', err.message);
   }
 
+  // Sincronizar tabla de diseños y columnas de pedido en BDs existentes.
+  try {
+    await db.ensureDesignAndOrderColumns();
+  } catch (err) {
+    console.warn('[DISEÑOS] No se pudieron sincronizar diseños/pedidos:', err.message);
+  }
+
   const routes = require('./routes');
   const serverApp = createApp(routes);
 

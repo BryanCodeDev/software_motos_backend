@@ -3,6 +3,9 @@ const db = require('../../config/db');
 const emailService = require('../../domains/email/email.service');
 const { activateQr } = require('../identifiers/identifier.service');
 
+const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
+const STICKER_PACK_QUANTITY = 2;
+
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
   const random = crypto.randomBytes(3).toString('hex').toUpperCase();
@@ -11,7 +14,10 @@ const generateOrderNumber = () => {
 
 const listOrders = async (req, res) => {
   const rows = await db.query(
-    `SELECT o.*, p.name AS product_name, p.slug AS product_slug
+    `SELECT o.id, o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity,
+            o.variant_id, o.commercial_status, o.payment_status, o.total_amount, o.currency,
+            o.shipping_address, o.created_at, o.updated_at,
+            p.name AS product_name, p.slug AS product_slug
      FROM orders o
      JOIN products p ON o.product_id = p.id
      WHERE o.user_id = ?
@@ -24,7 +30,10 @@ const listOrders = async (req, res) => {
 const getOrder = async (req, res) => {
   const { id } = req.params;
   const orders = await db.query(
-    `SELECT o.*, p.name AS product_name, p.slug AS product_slug
+    `SELECT o.id, o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity,
+            o.variant_id, o.commercial_status, o.payment_status, o.total_amount, o.currency,
+            o.shipping_address, o.created_at, o.updated_at,
+            p.name AS product_name, p.slug AS product_slug
      FROM orders o
      JOIN products p ON o.product_id = p.id
      WHERE o.id = ? AND o.user_id = ?`,
@@ -45,7 +54,7 @@ const getOrder = async (req, res) => {
 };
 
 const createOrder = async (req, res) => {
-  const { product_id, variant_id, shipping_address, customization } = req.validated.body;
+  const { product_id, design_id, variant_id, shipping_address, customization } = req.validated.body;
   const userId = req.user.id;
 
   const conn = await db.getConnection();
@@ -61,6 +70,8 @@ const createOrder = async (req, res) => {
       return res.status(404).json({ error: 'Producto no disponible' });
     }
     const product = products[0];
+
+    const requiresDesign = product.slug === STICKER_PRODUCT_SLUG;
 
     // Evitar compras duplicadas de la activación única del QR
     if (product.slug === 'qr-digital-basico') {
@@ -82,6 +93,28 @@ const createOrder = async (req, res) => {
       }
     }
 
+    // El producto de stickers exige un diseño seleccionado, disponible y vinculado al producto.
+    let design = null;
+    if (requiresDesign) {
+      if (!design_id) {
+        await conn.query('ROLLBACK');
+        return res.status(400).json({ error: 'Debes seleccionar un diseño para comprar los stickers.', code: 'design_required' });
+      }
+      if (!shipping_address) {
+        await conn.query('ROLLBACK');
+        return res.status(400).json({ error: 'La dirección de envío es requerida para los stickers.', code: 'shipping_required' });
+      }
+      const [designs] = await conn.query(
+        'SELECT id, name, image_url FROM product_designs WHERE id = ? AND product_id = ? AND is_available = 1 LIMIT 1',
+        [design_id, product_id]
+      );
+      if (designs.length === 0) {
+        await conn.query('ROLLBACK');
+        return res.status(404).json({ error: 'Diseño no disponible', code: 'design_not_available' });
+      }
+      design = designs[0];
+    }
+
     let priceAdjustment = 0;
     if (variant_id) {
       const [variants] = await conn.query(
@@ -95,6 +128,7 @@ const createOrder = async (req, res) => {
       priceAdjustment = variants[0].price_adjustment;
     }
 
+    // El precio se fija exclusivamente en el servidor; el frontend no lo envía ni lo modifica.
     const totalAmount = parseFloat(product.price) + parseFloat(priceAdjustment);
     const currency = product.currency;
     const orderNumber = generateOrderNumber();
@@ -102,14 +136,21 @@ const createOrder = async (req, res) => {
     const commercialStatus = totalAmount > 0 ? 'pending_confirmation' : 'paid';
     const paymentStatus = totalAmount > 0 ? 'unpaid' : 'approved';
 
+    const stickerQuantity = requiresDesign ? STICKER_PACK_QUANTITY : 1;
+
     const [result] = await conn.query(
-      `INSERT INTO orders (order_number, user_id, product_id, variant_id, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO orders (order_number, user_id, product_id, variant_id, design_id, design_name, design_image_url,
+                           sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderNumber,
         userId,
         product_id,
         variant_id || null,
+        design ? design.id : null,
+        design ? design.name : null,
+        design ? design.image_url : null,
+        stickerQuantity,
         commercialStatus,
         paymentStatus,
         totalAmount,
@@ -119,21 +160,24 @@ const createOrder = async (req, res) => {
       ]
     );
 
+    // Paquete de stickers: exactamente 2 unidades del mismo diseño. Precio unitario = total / 2.
+    const itemQuantity = requiresDesign ? STICKER_PACK_QUANTITY : 1;
+    const itemUnitPrice = requiresDesign ? parseFloat((totalAmount / STICKER_PACK_QUANTITY).toFixed(2)) : totalAmount;
     await conn.query(
-      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, ?, ?, ?, 1)',
-      [result.insertId, product_id, product.name, totalAmount]
+      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, ?, ?, ?, ?)',
+      [result.insertId, product_id, product.name, itemUnitPrice, itemQuantity]
     );
 
     if (totalAmount > 0) {
       await conn.query(
         'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
-        [result.insertId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency })]
+        [result.insertId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency, design: design ? { id: design.id, name: design.name } : null })]
       );
     }
 
     await conn.query(
       'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, 'order.create', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency }), null]
+      [userId, 'order.create', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id: design ? design.id : null, sticker_quantity: stickerQuantity }), null]
     );
 
     await conn.query('COMMIT');
@@ -142,6 +186,10 @@ const createOrder = async (req, res) => {
       id: result.insertId,
       order_number: orderNumber,
       product_name: product.name,
+      design_id: design ? design.id : null,
+      design_name: design ? design.name : null,
+      design_image_url: design ? design.image_url : null,
+      sticker_quantity: stickerQuantity,
       commercial_status: commercialStatus,
       payment_status: paymentStatus,
       total_amount: totalAmount,
@@ -187,4 +235,3 @@ module.exports = {
   getOrder,
   createOrder,
 };
-

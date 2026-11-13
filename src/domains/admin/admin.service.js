@@ -167,8 +167,10 @@ const dashboardStats = async (req, res) => {
 
 const listOrders = async (req, res) => {
   const rows = await db.query(
-    `SELECT o.id, o.order_number, o.commercial_status, o.payment_status, o.total_amount, o.currency, o.created_at,
-            u.email AS customer_email, p.name AS product_name
+    `SELECT o.id, o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity,
+            o.commercial_status, o.payment_status, o.total_amount, o.currency, o.shipping_address, o.created_at,
+            u.email AS customer_email, p.name AS product_name,
+            (SELECT i2.value FROM identifiers i2 WHERE i2.user_id = u.id AND i2.status IN ('pending_activation', 'active') ORDER BY i2.created_at DESC LIMIT 1) AS qr_value
      FROM orders o
      JOIN users u ON o.user_id = u.id
      JOIN products p ON o.product_id = p.id
