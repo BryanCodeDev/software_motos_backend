@@ -130,6 +130,36 @@ function stripCreateDatabaseAndUse(sql) {
     .replace(/^\s*USE\s+[`\w]+\s*;/gim, '');
 }
 
+// Separa el script en sentencias individuales y las ejecuta una a una.
+// Los errores de objeto duplicado (tabla, columna, índice, clave foránea) se
+// ignoran para que el esquema sea idempotente sobre bases existentes.
+const ignoreSchemaErr = (err) => {
+  if (!err) return false;
+  const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
+  const dupErnos = [1050, 1060, 1061, 1062, 1067, 1068];
+  const dupMsgs = [
+    'Duplicate column name',
+    'Duplicate key name',
+    'Duplicate entry',
+    'Table already exists',
+    'Duplicate index',
+    'Duplicate foreign key constraint name',
+    'Cannot add foreign key constraint',
+  ];
+  if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) return true;
+  return dupMsgs.some((m) => String(err.message || '').includes(m));
+};
+
+async function applyStatement(conn, stmt) {
+  const trimmed = stmt.trim();
+  if (!trimmed) return;
+  try {
+    await conn.query(trimmed);
+  } catch (err) {
+    if (!ignoreSchemaErr(err)) throw err;
+  }
+}
+
 function assertNotProduction(action) {
   if (process.env.NODE_ENV === 'production') {
     console.error(`ERROR: ${action} no está permitido en producción.`);
@@ -141,7 +171,11 @@ function assertNotProduction(action) {
 
 async function applySchema(conn) {
   console.log(`Aplicando ${SCHEMA_FILE}...`);
-  await conn.query(stripCreateDatabaseAndUse(readSQLFile(SCHEMA_FILE)));
+  const sql = stripCreateDatabaseAndUse(readSQLFile(SCHEMA_FILE));
+  const statements = sql.split(';').map((s) => s.trim()).filter((s) => s.length > 0);
+  for (const stmt of statements) {
+    await applyStatement(conn, stmt);
+  }
   console.log('Esquema aplicado.');
 }
 
