@@ -26,7 +26,7 @@ const ignoreDup = (err) => {
   if (!err) return false;
   const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
   const dupErnos = [1060, 1061, 1050, 1062, 1067];
-  const dupMsgs = ['Duplicate column name', 'Duplicate key name', 'Duplicate entry', 'Table already exists', 'Duplicate index'];
+  const dupMsgs = ['Duplicate column name', 'Duplicate key name', 'Duplicate entry', 'Table already exists', 'Duplicate index', 'Duplicate foreign key constraint name'];
   if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) return true;
   return dupMsgs.some((m) => String(err.message || '').includes(m));
 };
@@ -84,8 +84,8 @@ const ensureDesignAndOrderColumns = async () => {
     `);
   } catch (e) { if (!ignoreDup(e)) throw e; }
 
-  const addColumn = (sql) => {
-    try { return query(sql); } catch (e) { if (!ignoreDup(e)) throw e; }
+  const addColumn = async (sql) => {
+    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) throw e; }
   };
 
   await addColumn("ALTER TABLE orders ADD COLUMN design_id INT UNSIGNED NULL DEFAULT NULL AFTER variant_id");

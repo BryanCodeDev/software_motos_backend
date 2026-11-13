@@ -3,14 +3,14 @@ const qrInventoryService = require('./qr-inventory.service');
 const listPackages = async (req, res) => {
   const validated = req.validated;
   const result = await qrInventoryService.listPackages({
-    design: validated.query.design,
-    status: validated.query.status,
-    batch: validated.query.batch,
-    origin: validated.query.origin,
-    from: validated.query.from,
-    to: validated.query.to,
-    page: validated.query.page,
-    limit: validated.query.limit,
+    design: validated.design,
+    status: validated.status,
+    batch: validated.batch,
+    origin: validated.origin,
+    from: validated.from,
+    to: validated.to,
+    page: validated.page,
+    limit: validated.limit,
   });
   return res.json(result);
 };
