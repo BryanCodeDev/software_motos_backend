@@ -80,7 +80,7 @@ const resetDb = async () => {
   });
   try {
     await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
-  } finally { adminConn.release(); }
+  } finally { adminConn.end(); }
 
   const conn = await db.getConnection();
   try {
@@ -88,7 +88,7 @@ const resetDb = async () => {
     const [tables] = await conn.query("SELECT TABLE_NAME FROM information_schema.TABLES WHERE TABLE_SCHEMA = ?", [dbName]);
     for (const t of tables) { await conn.query('DROP TABLE IF EXISTS `' + t.TABLE_NAME + '`'); }
     await conn.query('SET FOREIGN_KEY_CHECKS = 1');
-  } finally { conn.release(); }
+  } finally { conn.end(); }
   const fs = require('fs');
   const strip = (s) => s.replace(/USE\s+`[^`]+`\s*;/gi, '').replace(/USE\s+[`\w]+\s*;/gi, '');
   const schema = strip(fs.readFileSync(__dirname + '/migrations/schema.sql', 'utf8'));
@@ -111,3 +111,8 @@ const resetDb = async () => {
 };
 
 module.exports = { request, extractCookie, login, dbq, dbone, signWebhook, resetDb, BASE };
+
+// Cierra el pool de MySQL para que el proceso de pruebas pueda terminar.
+module.exports.closeDb = async () => {
+  try { await db.close(); } catch {}
+};

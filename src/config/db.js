@@ -34,6 +34,12 @@ const ignoreDup = (err) => {
 // Garantiza columnas de permanencia/impresión de QR en bases de datos existentes.
 // Las bases nuevas las crean ya con estas columnas via schema.sql.
 const ensureIdentifierColumns = async () => {
+  // Permitir QR sin propietario (user_id NULL) para códigos aún no asignados.
+  try {
+    await query(
+      "ALTER TABLE identifiers MODIFY COLUMN user_id INT UNSIGNED NULL DEFAULT NULL"
+    );
+  } catch (e) { if (!ignoreDup(e)) throw e; }
   try {
     await query(
       "ALTER TABLE identifiers ADD COLUMN activation_at TIMESTAMP NULL DEFAULT NULL AFTER status"

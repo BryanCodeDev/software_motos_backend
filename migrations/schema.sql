@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS privacy_settings (
 -- 007: Identificadores QR (permanentes por usuario)
 CREATE TABLE IF NOT EXISTS identifiers (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id INT UNSIGNED NOT NULL,
+  user_id INT UNSIGNED NULL DEFAULT NULL,
   profile_id INT UNSIGNED NULL DEFAULT NULL,
   order_id INT UNSIGNED NULL DEFAULT NULL,
   value VARCHAR(80) NOT NULL,

@@ -876,7 +876,7 @@ const listQrsAdmin = async (filters = {}) => {
             u.email, u.role, u.created_at AS user_created_at,
             o.order_number, o.design_id, o.design_name, o.sticker_quantity
      FROM identifiers i
-     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users u ON u.id = i.user_id
      ${designJoin}
      ${whereSql} ${whereDesign}
      ORDER BY i.created_at DESC, i.id DESC
@@ -886,7 +886,7 @@ const listQrsAdmin = async (filters = {}) => {
 
   const [countRow] = await db.query(
     `SELECT COUNT(*) AS total FROM identifiers i
-     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users u ON u.id = i.user_id
      ${designJoin}
      ${whereSql} ${whereDesign}`,
     allParams
@@ -913,16 +913,16 @@ const listQrsAdmin = async (filters = {}) => {
 };
 
 const qrStats = async () => {
-  const [byStatus] = await db.query(
+  const byStatus = await db.query(
     `SELECT status, COUNT(*) AS total FROM identifiers GROUP BY status`
   );
-  const [byPrint] = await db.query(
+  const byPrint = await db.query(
     `SELECT print_status, COUNT(*) AS total FROM identifiers GROUP BY print_status`
   );
-  const [linked] = await db.query(
+  const linked = await db.query(
     `SELECT COUNT(*) AS total FROM identifiers WHERE user_id IS NOT NULL`
   );
-  const [unlinked] = await db.query(
+  const unlinked = await db.query(
     `SELECT COUNT(*) AS total FROM identifiers WHERE user_id IS NULL`
   );
   const totalRow = await db.query('SELECT COUNT(*) AS total FROM identifiers');
@@ -1106,7 +1106,7 @@ const fetchQrsByIds = async (qrIds) => {
             u.email, u.role,
             o.order_number, o.design_id, o.design_name, o.sticker_quantity
      FROM identifiers i
-     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users u ON u.id = i.user_id
      LEFT JOIN orders o ON o.id = i.order_id
      WHERE i.id IN (${placeholders})
      ORDER BY i.created_at DESC`,
