@@ -69,6 +69,19 @@ const signWebhook = (dataId, requestId, ts, secret) => {
 
 const resetDb = async () => {
   const dbName = process.env.DB_NAME || 'emergency_id_test';
+  // Autoprovisionar la base de pruebas si no existe (bases aisladas por archivo).
+  const mysql = require('mysql2/promise');
+  const adminConn = await mysql.createConnection({
+    host: process.env.DB_HOST || 'localhost',
+    port: parseInt(process.env.DB_PORT, 10) || 3307,
+    user: process.env.DB_USER || 'root',
+    password: process.env.DB_PASSWORD || 'Santimajo101219@',
+    multipleStatements: true,
+  });
+  try {
+    await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${dbName}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+  } finally { adminConn.release(); }
+
   const conn = await db.getConnection();
   try {
     await conn.query('SET FOREIGN_KEY_CHECKS = 0');

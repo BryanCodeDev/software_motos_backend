@@ -241,22 +241,12 @@ const mercadopagoWebhook = async (req, res) => {
 
     // Notificación de correo solo tras verificar el estado en el backend
     if (newPaymentStatus === 'approved') {
-      // Pedido de stickers físicos: asignar paquete de inventario o crear producción bajo pedido.
-      // El QR se genera/asigna una sola vez (el webhook es idempotente por payment_event).
-      if (order.design_id) {
-        try {
-          const { assignOrCreateForOrder } = require('../qr-inventory/qr-inventory.service');
-          await assignOrCreateForOrder(order.id, null);
-        } catch {
-          // No bloquear la notificación de pago si la asignación del QR falla.
-        }
-      } else {
-        // Activar el QR permanente del usuario (idempotente: reutiliza el existente).
-        try {
-          await activateQr(order.user_id, order.id, null);
-        } catch {
-          // No bloquear la notificación de pago si la activación del QR falla.
-        }
+      // Activar (o reutilizar) el QR permanente del usuario. Idempotente ante
+      // webhooks repetidos: activateQr reutiliza el identificador vigente.
+      try {
+        await activateQr(order.user_id, order.id, null);
+      } catch {
+        // No bloquear la notificación de pago si la activación del QR falla.
       }
       try {
         const users = await db.query('SELECT email FROM users WHERE id = ?', [

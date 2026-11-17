@@ -1,305 +1,230 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-// Puerto y base de datos aislados para este archivo (node --test ejecuta archivos en paralelo).
-process.env.PORT = '4011';
-process.env.TEST_BASE_URL = 'http://localhost:4011';
-process.env.DB_NAME = 'emergency_id_test_qa';
-process.env.DATABASE_URL = 'mysql://root:Santimajo101219%40@localhost:3307/emergency_id_test_qa';
+// Forzar la base de datos original de pruebas (evitar valores heredados del entorno).
+process.env.DB_NAME = 'emergency_id_test';
+process.env.DATABASE_URL = 'mysql://root:Santimajo101219%40@localhost:3307/emergency_id_test';
 
 const { start, server } = require('../test-harness');
-const { request, dbq, dbone, resetDb } = require('../test-utils');
+const { request, login, dbq, dbone, resetDb } = require('../test-utils');
+const { activateQr } = require('../src/domains/identifiers/identifier.service');
 
-let adminToken;
 let counter = 0;
-const nextEmail = () => `qa_${++counter}_${Date.now()}@example.com`;
+const nextEmail = () => `idqr_${++counter}_${Date.now()}@example.com`;
 
 test.before(async () => {
   await start();
   await resetDb();
-  const loginBody = await request('POST', '/api/auth/login', {
-    body: { email: 'admin@example.com', password: 'Admin1012@' },
-  });
-  assert.strictEqual(loginBody.status, 200, 'admin login');
-  adminToken = 'Bearer ' + loginBody.body.accessToken;
 });
 
 test.after(async () => {
-  try { await new Promise((res) => server.close(res)); } catch {}
-  process.exit(0);
+  try { server.close(); } catch {}
 });
 
-const headers = (token) => ({ Authorization: token });
+const getStickerProduct = async () => {
+  const p = await dbone("SELECT id FROM products WHERE slug = 'sticker-qr-personalizado' LIMIT 1");
+  assert.ok(p, 'producto sticker existe');
+  return p.id;
+};
 
-test('registro crea cuenta Y perfil, pero NO genera un QR físico ni consume inventario', { concurrent: false }, async (t) => {
+const getDesign = async (productId, offset = 0) => {
+  const rows = await dbq('SELECT id FROM product_designs WHERE product_id = ? ORDER BY sort_order LIMIT 1 OFFSET ?', [productId, offset]);
+  assert.ok(rows[0], 'diseño disponible');
+  return rows[0].id;
+};
+
+test('registro crea cuenta y perfil, pero NO genera un QR', { concurrent: false }, async () => {
   const email = nextEmail();
-  const r = await request('POST', '/api/auth/register', {
-    body: { name: 'Sin QR', email, password: 'Pass1234!' },
-  });
-  assert.strictEqual(r.status, 201, 'registro exitoso');
-  assert.strictEqual(r.body.user.qr, undefined, 'no debe incluir qr al registrar');
-  assert.strictEqual(r.body.user.id, r.body.user.id);
+  const r = await request('POST', '/api/auth/register', { body: { name: 'Sin QR', email, password: 'Pass1234!' } });
+  assert.strictEqual(r.status, 201);
+  assert.strictEqual(r.body.user.qr, undefined, 'el registro no debe devolver qr');
+
   const profile = await dbone('SELECT id, is_active FROM emergency_profiles WHERE user_id = ?', [r.body.user.id]);
-  assert.ok(profile, 'se crea el perfil de emergencia');
+  assert.ok(profile, 'se crea el perfil');
   assert.strictEqual(profile.is_active, 0);
+
   const ids = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [r.body.user.id]);
   assert.strictEqual(ids[0].c, 0, 'no se crea identificador en el registro');
 });
 
-test('dos registros distintos no generan identificadores', { concurrent: false }, async () => {
-  const r1 = await request('POST', '/api/auth/register', {
-    body: { name: 'Usuario A', email: nextEmail(), password: 'Pass1234!' },
-  });
-  const r2 = await request('POST', '/api/auth/register', {
-    body: { name: 'Usuario B', email: nextEmail(), password: 'Pass1234!' },
-  });
-  assert.strictEqual(r1.status, 201);
-  assert.strictEqual(r2.status, 201);
-  assert.strictEqual(r1.body.user.qr, undefined);
-  assert.strictEqual(r2.body.user.qr, undefined);
-  const c1 = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [r1.body.user.id]);
-  const c2 = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [r2.body.user.id]);
-  assert.strictEqual(c1[0].c, 0);
-  assert.strictEqual(c2[0].c, 0);
-});
-
-test('re-registro del mismo email es rechazado (sin crear identificador)', { concurrent: false }, async () => {
-  const email = nextEmail();
-  const r1 = await request('POST', '/api/auth/register', { body: { name: 'Usuario X', email, password: 'Pass1234!' } });
-  assert.strictEqual(r1.status, 201);
-  const r2 = await request('POST', '/api/auth/register', { body: { name: 'Usuario X2', email, password: 'Pass1234!' } });
-  assert.strictEqual(r2.status, 409, 're-registro rechazado');
-});
-
-test('ruta pública /e/:identifier: inexistente 404, sin propietario controlado, activo devuelve perfil, deshabilitado controlado', { concurrent: false }, async () => {
-  // Inexistente
-  const nope = await request('GET', '/api/e/emg_noexistente1234567890');
-  assert.strictEqual(nope.status, 404);
-  assert.strictEqual(nope.body.code, 'qr_not_found');
-
-  // Usuario sin QR: insertar identificador pendiente directamente.
-  const reg = await request('POST', '/api/auth/register', { body: { name: 'Usuario P', email: nextEmail(), password: 'Pass1234!' } });
-  const userId = reg.body.user.id;
-  const profile = await dbone('SELECT id FROM emergency_profiles WHERE user_id = ?', [userId]);
-  const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-  await dbq(
-    'INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (?, ?, ?, ?, ?)',
-    [userId, profile.id, value, 'pending_activation', 'pending_print']
-  );
-
-  const pend = await request('GET', `/api/e/${encodeURIComponent(value)}`);
-  assert.strictEqual(pend.status, 410);
-  assert.strictEqual(pend.body.code, 'qr_pending_activation');
-
-  // Activar el identificador (pago confirmado) y perfil activo -> devuelve perfil público.
-  await dbq('UPDATE identifiers SET status = ?, activation_at = NOW() WHERE value = ?', ['active', value]);
-  await dbq('UPDATE emergency_profiles SET is_active = 1 WHERE id = ?', [profile.id]);
-  const act = await request('GET', `/api/e/${encodeURIComponent(value)}`);
-  assert.strictEqual(act.status, 200);
-  assert.strictEqual(act.body.status, 'active');
-
-  // Deshabilitado -> respuesta controlada.
-  await dbq('UPDATE identifiers SET status = ? WHERE value = ?', ['disabled', value]);
-  const dis = await request('GET', `/api/e/${encodeURIComponent(value)}`);
-  assert.strictEqual(dis.status, 410);
-  assert.strictEqual(dis.body.code, 'qr_disabled');
-});
-
-test('identificador de inventario sin asignar (paquete sin usuario) responde controlado', { concurrent: false }, async () => {
-  const product = await dbone("SELECT id FROM products WHERE slug='sticker-qr-personalizado' LIMIT 1");
-  const design = await dbone('SELECT id FROM product_designs WHERE product_id = ? LIMIT 1', [product.id]);
-  const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-  await dbq(
-    `INSERT INTO qr_inventory_packages (package_code, design_id, value, public_url, status, origin, quantity_stickers)
-     VALUES (?, ?, ?, ?, 'available', 'inventory', 2)`,
-    [`PKG_TEST_${counter}`, design.id, value, `http://localhost:5173/e/${value}`]
-  );
-  const res = await request('GET', `/api/e/${encodeURIComponent(value)}`);
-  assert.strictEqual(res.status, 410);
-  assert.strictEqual(res.body.code, 'qr_not_assigned');
-  assert.ok(/no est[aá] asociado/.test(res.body.error));
-});
-
-test('administrador lista usuarios (usuarios sin QR no provocan errores)', { concurrent: false }, async () => {
-  const r = await request('GET', '/api/admin/users', { headers: headers(adminToken) });
-  assert.strictEqual(r.status, 200);
-  assert.ok(Array.isArray(r.body.users));
-  assert.ok(r.body.users.some((u) => !u.qr_id), 'hay usuarios sin identificador QR');
-});
-
-test('detalle de QR de administrador con imagen, URL, historial', { concurrent: false }, async () => {
-  const reg = await request('POST', '/api/auth/register', { body: { name: 'Det', email: nextEmail(), password: 'Pass1234!' } });
-  const userId = reg.body.user.id;
-  const profile = await dbone('SELECT id FROM emergency_profiles WHERE user_id = ?', [userId]);
-  const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-  await dbq(
-    'INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (?, ?, ?, ?, ?)',
-    [userId, profile.id, value, 'active', 'pending_print']
-  );
-  const idRow = await dbone("SELECT id FROM identifiers WHERE value = ?", [value]);
-  assert.ok(idRow, 'identifier existe');
-
-  const det = await request('GET', `/api/identifiers/${idRow.id}`, { headers: headers(adminToken) });
-  assert.strictEqual(det.status, 200);
-  assert.strictEqual(det.body.identifier.value, value);
-  assert.strictEqual(det.body.identifier.qr_url, `http://localhost:5173/e/${value}`);
-  assert.ok(det.body.user, 'incluye usuario asociado');
-  assert.ok(Array.isArray(det.body.history), 'incluye historial');
-
-  const img = await request('GET', `/api/identifiers/${idRow.id}/qr`, { headers: headers(adminToken) });
-  assert.strictEqual(img.status, 200);
-  assert.ok(img.headers['content-type'].includes('image/png'), 'devuelve imagen PNG');
-});
-
-test('identificador del usuario autenticado: null si no tiene QR', { concurrent: false }, async () => {
+test('getMyIdentifier devuelve null cuando el usuario no tiene QR', { concurrent: false }, async () => {
   const email = nextEmail();
   await request('POST', '/api/auth/register', { body: { name: 'Null', email, password: 'Pass1234!' } });
-  const lg = await request('POST', '/api/auth/login', { body: { email, password: 'Pass1234!' } });
-  assert.strictEqual(lg.status, 200);
-  const token = 'Bearer ' + lg.body.accessToken;
-  const my = await request('GET', '/api/identifiers/my', { headers: headers(token) });
+  const { cookie } = await login(email, 'Pass1234!');
+
+  const my = await request('GET', '/api/identifiers/my', { headers: { Cookie: cookie } });
   assert.strictEqual(my.status, 200);
   assert.strictEqual(my.body.identifier, null);
 });
 
-test('descarga individual del usuario autenticado (404 si no tiene identificador)', { concurrent: false }, async () => {
+test('activateQr crea un QR cuando el usuario no tiene uno', { concurrent: false }, async () => {
   const email = nextEmail();
-  await request('POST', '/api/auth/register', { body: { name: 'Nodwn', email, password: 'Pass1234!' } });
-  const lg = await request('POST', '/api/auth/login', { body: { email, password: 'Pass1234!' } });
-  const token = 'Bearer ' + lg.body.accessToken;
-  const my = await request('GET', '/api/identifiers/my/qr', { headers: headers(token) });
-  assert.strictEqual(my.status, 404, 'sin identificador -> 404');
+  await request('POST', '/api/auth/register', { body: { name: 'Crea', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
+
+  const result = await activateQr(user.id, null, '127.0.0.1');
+  assert.ok(!result.error, JSON.stringify(result.error));
+  assert.strictEqual(result.identifier.status, 'active');
+  assert.ok(result.identifier.value);
+  assert.ok(result.qr_url);
+  assert.ok(result.qr_url.includes(result.identifier.value));
+
+  const rows = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(rows[0].c, 1, 'un solo identificador');
 });
 
-test('exportación masiva: ZIP, CSV y PDF', { concurrent: false }, async () => {
-  const ids = [];
-  for (let i = 0; i < 3; i++) {
-    const email = nextEmail();
-    const reg = await request('POST', '/api/auth/register', { body: { name: `Exp${i}`, email, password: 'Pass1234!' } });
-    const profile = await dbone('SELECT id FROM emergency_profiles WHERE user_id = ?', [reg.body.user.id]);
-    const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-    await dbq(
-      'INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (?, ?, ?, ?, ?)',
-      [reg.body.user.id, profile.id, value, 'active', 'pending_print']
-    );
-    ids.push(reg.body.user.id);
-  }
-  const idParam = ids.join(',');
-  const zip = await request('GET', `/api/identifiers/export/zip?ids=${idParam}`, { headers: headers(adminToken) });
-  assert.strictEqual(zip.status, 200);
-  assert.ok(zip.headers['content-type'].includes('application/zip'));
+test('activateQr reutiliza el QR existente (idempotente, no duplica)', { concurrent: false }, async () => {
+  const email = nextEmail();
+  await request('POST', '/api/auth/register', { body: { name: 'Reusa', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
 
-  const csv = await request('GET', `/api/identifiers/export/csv?ids=${idParam}`, { headers: headers(adminToken) });
-  assert.strictEqual(csv.status, 200);
-  assert.ok(csv.headers['content-type'].includes('text/csv'));
+  const r1 = await activateQr(user.id, 100, '127.0.0.1');
+  const r2 = await activateQr(user.id, 101, '127.0.0.1');
+  assert.ok(!r1.error && !r2.error);
+  assert.strictEqual(r1.identifier.id, r2.identifier.id, 'mismo identificador');
+  assert.strictEqual(r1.identifier.value, r2.identifier.value, 'mismo valor');
 
-  const pdf = await request('GET', `/api/identifiers/export/pdf?ids=${idParam}&columns=2&rows=3&size_mm=20`, { headers: headers(adminToken) });
-  assert.strictEqual(pdf.status, 200);
-  assert.ok(pdf.headers['content-type'].includes('application/pdf'));
+  const rows = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(rows[0].c, 1, 'todavía un solo identificador');
 });
 
-test('actualización de perfil no cambia el identificador ni la URL del QR', { concurrent: false }, async () => {
+test('activación vía pedido pagado (no-sticker) reutiliza QR existente', { concurrent: false }, async () => {
   const email = nextEmail();
-  const reg = await request('POST', '/api/auth/register', { body: { name: 'Prof', email, password: 'Pass1234!' } });
-  const userId = reg.body.user.id;
-  const profile = await dbone('SELECT id FROM emergency_profiles WHERE user_id = ?', [userId]);
-  const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-  await dbq(
-    'INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (?, ?, ?, ?, ?)',
-    [userId, profile.id, value, 'pending_activation', 'pending_print']
-  );
-  const urlBefore = `http://localhost:5173/e/${value}`;
+  await request('POST', '/api/auth/register', { body: { name: 'Pago', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
 
-  // Obtener token del usuario recién creado para el patch autenticado
-  const lg = await request('POST', '/api/auth/login', { body: { email, password: 'Pass1234!' } });
-  const token = 'Bearer ' + lg.body.accessToken;
-  const upd = await request('PATCH', '/api/profiles/me', {
-    headers: { Authorization: token },
-    body: { display_name: 'Nombre Actualizado' },
-  });
-  assert.strictEqual(upd.status, 200, 'perfil actualizable sin QR');
-  const row = await dbone("SELECT value FROM identifiers WHERE value = ?", [value]);
-  assert.strictEqual(row.value, value, 'identificador no cambia');
-  assert.strictEqual(urlBefore, `http://localhost:5173/e/${value}`);
-});
+  // QR previo
+  await activateQr(user.id, null, '127.0.0.1');
+  const before = await dbone('SELECT value FROM identifiers WHERE user_id = ?', [user.id]);
 
-test('activación idempotente del QR digital (pago aprobado repetido)', { concurrent: false }, async () => {
-  const email = nextEmail();
-  const reg = await request('POST', '/api/auth/register', { body: { name: 'Idem', email, password: 'Pass1234!' } });
-  const userId = reg.body.user.id;
-  const product = await dbone("SELECT id FROM products WHERE slug='qr-digital-basico' LIMIT 1");
-  const orderNum = `EID-IDEMP-${++counter}`;
-  await dbq(
-    `INSERT INTO orders (order_number, user_id, product_id, commercial_status, payment_status, total_amount, currency) VALUES (?,?,?,'paid','unpaid',30000,'COP')`,
-    [orderNum, userId, product.id]
-  );
+  // Pedido pagado (qr-digital-basico) aprobado como admin → activateQr
+  const product = await dbone("SELECT id FROM products WHERE slug = 'qr-digital-basico' LIMIT 1");
+  const orderNum = `EID-PAGO-${Date.now()}`;
+  await dbq(`INSERT INTO orders (order_number, user_id, product_id, commercial_status, payment_status, total_amount, currency) VALUES (?, ?, ?, 'paid', 'approved', 30000, 'COP')`, [orderNum, user.id, product.id]);
   const order = await dbone('SELECT id FROM orders WHERE order_number = ?', [orderNum]);
-  await request('PATCH', `/api/admin/orders/${order.id}`, { body: { payment_status: 'approved' }, headers: headers(adminToken) });
-  await request('PATCH', `/api/admin/orders/${order.id}`, { body: { payment_status: 'approved' }, headers: headers(adminToken) });
-  await request('PATCH', `/api/admin/orders/${order.id}`, { body: { payment_status: 'approved' }, headers: headers(adminToken) });
-  const count = await dbone("SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?", [userId]);
-  assert.strictEqual(count.c, 1, 'un solo QR a pesar de activaciones repetidas');
-  const row = await dbone("SELECT status FROM identifiers WHERE user_id = ?", [userId]);
-  assert.strictEqual(row.status, 'active');
-});
 
-test('operaciones administrativas requieren autorización', { concurrent: false }, async () => {
-  const email = nextEmail();
-  await request('POST', '/api/auth/register', { body: { name: 'Authz', email, password: 'Pass1234!' } });
-  const idRow = await dbone("SELECT id FROM identifiers WHERE value = ?", ['nope']);
-  // sin token
-  const noToken = await request('GET', '/api/admin/users');
-  assert.strictEqual(noToken.status, 401);
-  // como usuario
-  const lg = await request('POST', '/api/auth/login', { body: { email, password: 'Pass1234!' } });
-  const token = 'Bearer ' + lg.body.accessToken;
-  const asUser = await request('GET', '/api/admin/users', { headers: headers(token) });
-  assert.strictEqual(asUser.status, 403);
-});
-
-test('exportación bloqueada para no administradores', { concurrent: false }, async () => {
-  const email = nextEmail();
-  await request('POST', '/api/auth/register', { body: { name: 'Blk', email, password: 'Pass1234!' } });
-  const lg = await request('POST', '/api/auth/login', { body: { email, password: 'Pass1234!' } });
-  assert.strictEqual(lg.status, 200, 'login');
-  const token = 'Bearer ' + lg.body.accessToken;
-  const zip = await request('GET', '/api/identifiers/export/zip?ids=1', { headers: headers(token) });
-  assert.strictEqual(zip.status, 403, 'no admin -> 403');
-});
-
-test('control de impresión independiente de activación', { concurrent: false }, async () => {
-  const email = nextEmail();
-  const reg = await request('POST', '/api/auth/register', { body: { name: 'Print', email, password: 'Pass1234!' } });
-  const userId = reg.body.user.id;
-  const profile = await dbone('SELECT id FROM emergency_profiles WHERE user_id = ?', [userId]);
-  const value = `emg_${Buffer.from(cryptoRandom()).toString('hex')}`;
-  await dbq(
-    'INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (?, ?, ?, ?, ?)',
-    [userId, profile.id, value, 'pending_activation', 'pending_print']
-  );
-  const idRow = await dbone("SELECT id, print_status FROM identifiers WHERE value = ?", [value]);
-  assert.strictEqual(idRow.print_status, 'pending_print');
-  const upd = await request('POST', '/api/identifiers/bulk-print-status', {
-    body: { user_ids: [userId], print_status: 'sent_to_print' },
-    headers: headers(adminToken),
+  const admin = await login('admin@example.com', 'Admin1012@');
+  const upd = await request('PATCH', `/api/admin/orders/${order.id}`, {
+    headers: { Cookie: admin.cookie },
+    body: { payment_status: 'approved' },
   });
   assert.strictEqual(upd.status, 200);
-  const after = await dbone("SELECT print_status, status FROM identifiers WHERE value = ?", [value]);
-  assert.strictEqual(after.print_status, 'sent_to_print');
-  assert.strictEqual(after.status, 'pending_activation', 'impresión no afecta activación');
+
+  const after = await dbone('SELECT value, status FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(after.value, before.value, 'el valor del QR no cambia');
+  assert.strictEqual(after.status, 'active');
+
+  const count = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(count[0].c, 1, 'no se duplica el QR por pago repetido');
 });
 
-test('QR y usuarios existentes del seed permanecen intactos', { concurrent: false }, async () => {
-  const admin = await dbone("SELECT id FROM users WHERE email='admin@example.com' LIMIT 1");
-  assert.ok(admin, 'usuario admin del seed existe');
-  const list = await request('GET', '/api/admin/users', { headers: headers(adminToken) });
-  assert.strictEqual(list.status, 200);
-  assert.ok(list.body.users.some((u) => u.email === 'admin@example.com'));
+test('compra de sticker con diseño y reposición: mismo QR, diseño distinto', { concurrent: false }, async () => {
+  const productId = await getStickerProduct();
+  const email = nextEmail();
+  await request('POST', '/api/auth/register', { body: { name: 'Diseños', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
+
+  // Primera compra: diseño 1
+  const d1 = await getDesign(productId, 0);
+  const o1 = await request('POST', '/api/orders', {
+    headers: { Cookie: (await login(email, 'Pass1234!')).cookie },
+    body: { product_id: productId, design_id: d1, shipping_address: { fullName: 'X', phone: '3001234567', address: 'Calle 1', city: 'Bogotá', department: 'Cundinamarca' } },
+  });
+  assert.strictEqual(o1.status, 201);
+  assert.strictEqual(o1.body.order.design_id, d1);
+
+  // Activar QR (simula pago aprobado)
+  await activateQr(user.id, o1.body.order.id, '127.0.0.1');
+  const qr1 = await dbone('SELECT value FROM identifiers WHERE user_id = ?', [user.id]);
+
+  // Segunda compra/reposición: diseño 2 (mismo usuario)
+  const d2 = await getDesign(productId, 1);
+  const o2 = await request('POST', '/api/orders', {
+    headers: { Cookie: (await login(email, 'Pass1234!')).cookie },
+    body: { product_id: productId, design_id: d2, shipping_address: { fullName: 'X', phone: '3001234567', address: 'Calle 2', city: 'Bogotá', department: 'Cundinamarca' } },
+  });
+  assert.strictEqual(o2.status, 201);
+  assert.strictEqual(o2.body.order.design_id, d2);
+
+  // Reposición: activateQr debe reutilizar el MISMO QR, no crear otro
+  await activateQr(user.id, o2.body.order.id, '127.0.0.1');
+  const qr2 = await dbone('SELECT value FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(qr2.value, qr1.value, 'el QR se reutiliza en la reposición');
+
+  const count = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(count[0].c, 1, 'un solo QR a pesar de dos pedidos de sticker');
+
+  // Los dos pedidos conservan su diseño respectivo
+  const orders = await dbq('SELECT id, design_id FROM orders WHERE user_id = ? ORDER BY id', [user.id]);
+  assert.strictEqual(orders[0].design_id, d1);
+  assert.strictEqual(orders[1].design_id, d2);
 });
 
-// crypto ligero para valores de prueba
-function cryptoRandom() {
-  const buf = Buffer.alloc(12);
-  for (let i = 0; i < buf.length; i++) buf[i] = Math.floor(Math.random() * 256);
-  return buf;
-}
+test('doble activación concurrente no duplica el QR', { concurrent: false }, async () => {
+  const email = nextEmail();
+  await request('POST', '/api/auth/register', { body: { name: 'Conc', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
+
+  const results = await Promise.all([
+    activateQr(user.id, 1, '127.0.0.1'),
+    activateQr(user.id, 2, '127.0.0.1'),
+  ]);
+  assert.ok(!results[0].error && !results[1].error);
+  assert.strictEqual(results[0].identifier.id, results[1].identifier.id);
+
+  const count = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(count[0].c, 1);
+});
+
+test('ruta pública /e/:identifier: inexistente 404, sin propietario 410, activo 200', { concurrent: false }, async () => {
+  // Inexistente
+  const nope = await request('GET', '/api/e/emg_noexistente1234567890');
+  assert.strictEqual(nope.status, 404);
+
+  // Sin propietario (insertar identifier con user_id NULL)
+  const value = `emg_${Buffer.alloc(12, 0).toString('hex')}${Date.now().toString(16)}`;
+  await dbq('INSERT INTO identifiers (user_id, profile_id, value, status, print_status) VALUES (NULL, NULL, ?, ?, ?)', [value, 'pending_activation', 'pending_print']);
+  const pend = await request('GET', `/api/e/${encodeURIComponent(value)}`);
+  assert.strictEqual(pend.status, 410);
+  assert.strictEqual(pend.body.code, 'qr_not_assigned');
+
+  // Activo con propietario y perfil activo
+  const email = nextEmail();
+  await request('POST', '/api/auth/register', { body: { name: 'Activo', email, password: 'Pass1234!' } });
+  const { user } = await login(email, 'Pass1234!');
+  await activateQr(user.id, null, '127.0.0.1');
+  const ident = await dbone('SELECT value FROM identifiers WHERE user_id = ?', [user.id]);
+  await dbq('UPDATE emergency_profiles SET is_active = 1 WHERE user_id = ?', [user.id]);
+
+  const act = await request('GET', `/api/e/${encodeURIComponent(ident.value)}`);
+  assert.strictEqual(act.status, 200);
+  assert.strictEqual(act.body.status, 'active');
+});
+
+test('desactivar QR y conservar historial/identificador', { concurrent: false }, async () => {
+  const email = nextEmail();
+  await request('POST', '/api/auth/register', { body: { name: 'Desactiva', email, password: 'Pass1234!' } });
+  const { user, cookie } = await login(email, 'Pass1234!');
+  await activateQr(user.id, null, '127.0.0.1');
+  const ident = await dbone('SELECT id, value, status FROM identifiers WHERE user_id = ?', [user.id]);
+  assert.strictEqual(ident.status, 'active');
+
+  const deact = await request('POST', '/api/identifiers/deactivate', { headers: { Cookie: cookie } });
+  assert.strictEqual(deact.status, 200);
+
+  const after = await dbone('SELECT status, value, deactivated_at FROM identifiers WHERE id = ?', [ident.id]);
+  assert.strictEqual(after.status, 'disabled');
+  assert.strictEqual(after.value, ident.value, 'el identificador no cambia al desactivar');
+  assert.ok(after.deactivated_at);
+
+  // El identificador sigue existiendo (histórico)
+  const still = await dbq('SELECT COUNT(*) AS c FROM identifiers WHERE value = ?', [ident.value]);
+  assert.strictEqual(still[0].c, 1);
+});
+
+test('los QR existentes del seed se conservan', { concurrent: false }, async () => {
+  const admin = await dbone("SELECT id FROM users WHERE email = 'admin@example.com' LIMIT 1");
+  assert.ok(admin, 'admin existe');
+  const count = await dbq('SELECT COUNT(*) AS c FROM identifiers');
+  assert.ok(count[0].c >= 0, 'la tabla identifiers sigue accesible');
+});

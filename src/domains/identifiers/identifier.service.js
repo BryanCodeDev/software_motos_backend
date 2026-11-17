@@ -176,13 +176,41 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
   try {
     await conn.query('START TRANSACTION');
 
+    // Bloquea TODOS los identificadores del usuario para evitar doble creación
+    // por webhooks o solicitudes simultáneas. La restricción de unicidad
+    // uq_identifiers_one_active_per_user refuerza esto en MySQL.
     const [rows] = await conn.query(
-      'SELECT id, value, status, activation_at FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1 FOR UPDATE',
+      'SELECT id, value, status, activation_at, order_id FROM identifiers WHERE user_id = ? FOR UPDATE',
       [userId]
     );
 
+    // Reutiliza el vigente (active o pending_activation). Nunca crea uno nuevo si ya existe.
+    const existing = rows.find((r) => r.status === 'active' || r.status === 'pending_activation');
+
     let identifier;
-    if (rows.length === 0) {
+    if (existing) {
+      await conn.query(
+        'UPDATE identifiers SET status = ?, activation_at = COALESCE(activation_at, NOW()), order_id = COALESCE(order_id, ?) WHERE id = ?',
+        ['active', orderId, existing.id]
+      );
+      await conn.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          userId,
+          'identifier.activate',
+          'identifiers',
+          String(existing.id),
+          JSON.stringify({ value: existing.value, order_id: orderId, previous_status: existing.status }),
+          ipAddress,
+        ]
+      );
+      identifier = {
+        id: existing.id,
+        value: existing.value,
+        status: 'active',
+        activation_at: existing.activation_at || new Date(),
+      };
+    } else {
       // No hay QR previo: crear uno activo directamente vinculado al pedido.
       const profile = await ensureProfileTx(conn, userId);
       let value;
@@ -223,27 +251,6 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
           ipAddress,
         ]
       );
-    } else {
-      identifier = rows[0];
-      if (identifier.status !== 'active') {
-        await conn.query(
-          'UPDATE identifiers SET status = ?, activation_at = NOW(), order_id = COALESCE(order_id, ?) WHERE id = ?',
-          ['active', orderId, identifier.id]
-        );
-        await conn.query(
-          'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-          [
-            userId,
-            'identifier.activate',
-            'identifiers',
-            String(identifier.id),
-            JSON.stringify({ value: identifier.value, order_id: orderId, previous_status: identifier.status }),
-            ipAddress,
-          ]
-        );
-      }
-      identifier.status = 'active';
-      identifier.activation_at = identifier.activation_at || new Date();
     }
 
     // Activar el perfil de emergencia asociado al QR activo.
@@ -833,6 +840,403 @@ const bulkUpdatePrintStatus = async (req, res) => {
   return res.json({ message: `Estado de impresión actualizado a ${print_status}`, count: idList.length });
 };
 
+// ---------------------------------------------------------------------------
+// Administración centralizada de QR (módulo /admin/qrs)
+// ---------------------------------------------------------------------------
+
+const listQrsAdmin = async (filters = {}) => {
+  const {
+    q, user_id, status, print_status, design_id, from, to,
+    linked, page = 1, limit = 25,
+  } = filters;
+
+  const where = [];
+  const params = [];
+  if (q) { where.push('(i.value LIKE ? OR u.email LIKE ?)'); params.push(`%${q}%`, `%${q}%`); }
+  if (user_id) { where.push('i.user_id = ?'); params.push(user_id); }
+  if (status) { where.push('i.status = ?'); params.push(status); }
+  if (print_status) { where.push('i.print_status = ?'); params.push(print_status); }
+  if (linked === 'true') { where.push('i.user_id IS NOT NULL'); }
+  else if (linked === 'false') { where.push('i.user_id IS NULL'); }
+  if (from) { where.push('i.created_at >= ?'); params.push(from); }
+  if (to) { where.push('i.created_at <= ?'); params.push(to); }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+  const offset = (p - 1) * l;
+
+  // design filter requiere join con orders (el diseño se guarda en la orden).
+  const designJoin = design_id ? 'LEFT JOIN orders o ON o.id = i.order_id' : 'LEFT JOIN orders o ON o.id = i.order_id';
+  const whereDesign = design_id ? (where.length ? 'AND ' : 'WHERE ') + 'o.design_id = ?' : '';
+  const allParams = design_id ? params.concat([design_id]) : params;
+
+  const rows = await db.query(
+    `SELECT i.id, i.user_id, i.value, i.status, i.activation_at, i.print_status,
+            i.created_at, i.updated_at, i.deactivated_at, i.order_id, i.replaced_by_id,
+            u.email, u.role, u.created_at AS user_created_at,
+            o.order_number, o.design_id, o.design_name, o.sticker_quantity
+     FROM identifiers i
+     JOIN users u ON u.id = i.user_id
+     ${designJoin}
+     ${whereSql} ${whereDesign}
+     ORDER BY i.created_at DESC, i.id DESC
+     LIMIT ? OFFSET ?`,
+    allParams.concat([l, offset])
+  );
+
+  const [countRow] = await db.query(
+    `SELECT COUNT(*) AS total FROM identifiers i
+     JOIN users u ON u.id = i.user_id
+     ${designJoin}
+     ${whereSql} ${whereDesign}`,
+    allParams
+  );
+
+  return {
+    qrs: rows.map((r) => ({
+      id: r.id,
+      user_id: r.user_id,
+      value: r.value,
+      status: r.status,
+      activation_at: r.activation_at,
+      print_status: r.print_status,
+      created_at: r.created_at,
+      updated_at: r.updated_at,
+      deactivated_at: r.deactivated_at,
+      order_id: r.order_id,
+      replaced_by_id: r.replaced_by_id,
+      user: { id: r.user_id, email: r.email, role: r.role, created_at: r.user_created_at },
+      order: r.order_id ? { id: r.order_id, order_number: r.order_number, design_id: r.design_id, design_name: r.design_name, sticker_quantity: r.sticker_quantity } : null,
+    })),
+    pagination: { page: p, limit: l, total: countRow.total, pages: Math.ceil(countRow.total / l) },
+  };
+};
+
+const qrStats = async () => {
+  const [byStatus] = await db.query(
+    `SELECT status, COUNT(*) AS total FROM identifiers GROUP BY status`
+  );
+  const [byPrint] = await db.query(
+    `SELECT print_status, COUNT(*) AS total FROM identifiers GROUP BY print_status`
+  );
+  const [linked] = await db.query(
+    `SELECT COUNT(*) AS total FROM identifiers WHERE user_id IS NOT NULL`
+  );
+  const [unlinked] = await db.query(
+    `SELECT COUNT(*) AS total FROM identifiers WHERE user_id IS NULL`
+  );
+  const totalRow = await db.query('SELECT COUNT(*) AS total FROM identifiers');
+  return {
+    total: totalRow[0].total,
+    by_status: byStatus.reduce((acc, r) => { acc[r.status] = Number(r.total); return acc; }, {}),
+    by_print_status: byPrint.reduce((acc, r) => { acc[r.print_status] = Number(r.total); return acc; }, {}),
+    linked: Number(linked[0].total),
+    unlinked: Number(unlinked[0].total),
+  };
+};
+
+// Vincula un QR disponible a un usuario (transaccional, auditable, restringido).
+const linkQrToUser = async ({ qrId, userId, actorId, ipAddress = null }) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, status, print_status FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
+    );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+
+    // Nunca reasignar un QR ya impreso, entregado o vinculado a otro usuario.
+    if (qr.user_id && qr.user_id !== userId) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_already_linked', status: 409 };
+    }
+    if (qr.print_status === 'printed' || qr.print_status === 'delivered' || qr.status === 'replaced') {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_eligible', status: 409 };
+    }
+
+    // El usuario destino no puede tener otro QR vigente.
+    const [userRows] = await conn.query(
+      'SELECT id, value, status FROM identifiers WHERE user_id = ? AND status IN (?, ?) FOR UPDATE',
+      [userId, 'active', 'pending_activation']
+    );
+    if (userRows.length > 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'user_already_has_qr', status: 409 };
+    }
+
+    await conn.query(
+      'UPDATE identifiers SET user_id = ?, status = COALESCE(NULLIF(status, ?), ?) WHERE id = ?',
+      [userId, 'pending_activation', 'pending_activation', qrId]
+    );
+    await conn.query('UPDATE emergency_profiles SET is_active = 1 WHERE user_id = ?', [userId]);
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'qr.link_to_user',
+        'identifiers',
+        String(qrId),
+        JSON.stringify({ value: qr.value, user_id: userId, previous_user_id: qr.user_id }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return { qr_id: qrId, value: qr.value, user_id: userId, status: 'pending_activation' };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// Desvincula un QR de su usuario (transaccional, auditable). No borra historial.
+const unlinkQrFromUser = async ({ qrId, actorId, ipAddress = null }) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, status, print_status FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
+    );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+    if (!qr.user_id) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_linked', status: 409 };
+    }
+    // Nunca desvincular automáticamente un QR impreso/entregado: requiere acción explícita de admin y queda auditado.
+    if (qr.print_status === 'delivered') {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_delivered_cannot_unlink', status: 409 };
+    }
+
+    const previousUserId = qr.user_id;
+    await conn.query(
+      'UPDATE identifiers SET user_id = NULL, status = ? WHERE id = ?',
+      ['deactivated', qrId]
+    );
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'qr.unlink_from_user',
+        'identifiers',
+        String(qrId),
+        JSON.stringify({ value: qr.value, previous_user_id: previousUserId }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return { qr_id: qrId, value: qr.value, user_id: null, status: 'deactivated' };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// Cambia el estado de producción/impresión de un QR (independiente de activación).
+const setQrPrintStatus = async ({ qrId, printStatus, actorId, ipAddress = null }) => {
+  const valid = ['pending_print', 'sent_to_print', 'printed', 'delivered', 'cancelled'];
+  if (!valid.includes(printStatus)) {
+    return { error: 'invalid_print_status', status: 400 };
+  }
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, print_status, status FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
+    );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+    const previous = qr.print_status;
+
+    await conn.query(
+      'UPDATE identifiers SET print_status = ? WHERE id = ?',
+      [printStatus, qrId]
+    );
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'qr.print_status_change',
+        'identifiers',
+        String(qrId),
+        JSON.stringify({ value: qr.value, previous_print_status: previous, new_print_status: printStatus }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return { qr_id: qrId, value: qr.value, previous_print_status: previous, print_status: printStatus };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// Obtiene identificadores por sus IDs (para exportación de producción), con usuario, pedido y diseño.
+const fetchQrsByIds = async (qrIds) => {
+  if (!qrIds || qrIds.length === 0) return [];
+  const placeholders = qrIds.map(() => '?').join(',');
+  return db.query(
+    `SELECT i.id, i.user_id, i.value, i.status, i.activation_at, i.print_status, i.created_at, i.order_id,
+            u.email, u.role,
+            o.order_number, o.design_id, o.design_name, o.sticker_quantity
+     FROM identifiers i
+     JOIN users u ON u.id = i.user_id
+     LEFT JOIN orders o ON o.id = i.order_id
+     WHERE i.id IN (${placeholders})
+     ORDER BY i.created_at DESC`,
+    qrIds
+  );
+};
+
+// Exportación CSV de producción por IDs de QR.
+const exportQrsByIdsCsv = async (qrIds) => {
+  const rows = await fetchQrsByIds(qrIds);
+  if (rows.length === 0) {
+    return { error: 'no_qrs', status: 404 };
+  }
+  const csv = buildQrCsv(rows);
+  return { csv };
+};
+
+// Exportación ZIP de producción por IDs de QR (imágenes individuales + CSV embebido).
+const exportQrsByIdsZip = async (qrIds, res) => {
+  const rows = await fetchQrsByIds(qrIds);
+  if (rows.length === 0) {
+    return { error: 'no_qrs', status: 404 };
+  }
+
+  const archiver = require('archiver');
+  const archive = archiver('zip', { zlib: { level: 6 } });
+
+  res.set('Content-Type', 'application/zip');
+  res.set('Content-Disposition', 'attachment; filename="qrs-produccion.zip"');
+  res.set('Cache-Control', 'private, no-store');
+
+  archive.pipe(res);
+
+  archive.on('error', (err) => {
+    if (!res.headersSent) {
+      return res.status(500).json({ error: 'Error generando el ZIP', code: 'zip_error' });
+    }
+    res.end();
+  });
+
+  for (const row of rows) {
+    try {
+      const png = await generateQrBuffer(row.value);
+      archive.append(png, { name: `QR_${row.value}.png` });
+    } catch {
+      // Si falla una imagen, se omite del ZIP pero continúa el resto.
+    }
+  }
+
+  const csv = buildQrCsv(rows);
+  archive.append(csv, { name: 'identificacion_qrs.csv' });
+
+  await archive.finalize();
+  return { sent: true };
+};
+
+// Exportación PDF de producción por IDs de QR (cuadrícula para impresión de stickers).
+const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
+  const rows = await fetchQrsByIds(qrIds);
+  if (rows.length === 0) {
+    return { error: 'no_qrs', status: 404 };
+  }
+
+  const PDFDocument = require('pdfkit');
+  const { columns = '3', rowsPerPage = '5', size_mm = '25', gap_mm = '8', margin_mm = '12' } = query;
+
+  const columnsNum = Math.max(1, Math.min(10, parseInt(columns, 10) || 3));
+  const rowsNum = Math.max(1, Math.min(20, parseInt(rowsPerPage, 10) || 5));
+  const size = Math.max(15, Math.min(100, parseFloat(size_mm) || 25));
+  const gap = Math.max(0, Math.min(30, parseFloat(gap_mm) || 8));
+  const margin = Math.max(0, Math.min(40, parseFloat(margin_mm) || 12));
+
+  const MM_TO_PT = 2.834645669;
+  const pageW = 210 * MM_TO_PT;
+  const pageH = 297 * MM_TO_PT;
+  const gapPt = gap * MM_TO_PT;
+  const marginPt = margin * MM_TO_PT;
+  const usableW = pageW - 2 * marginPt;
+  const usableH = pageH - 2 * marginPt;
+  const cellW = size * MM_TO_PT;
+  const cellH = size * MM_TO_PT;
+  const maxCellW = (usableW - (columnsNum - 1) * gapPt) / columnsNum;
+  const maxCellH = (usableH - (rowsNum - 1) * gapPt) / rowsNum;
+  const cellPt = Math.min(cellW, cellH, maxCellW, maxCellH);
+
+  const doc = new PDFDocument({ size: 'A4', layout: 'portrait', margin: 0 });
+  const buffers = [];
+  doc.on('data', (b) => buffers.push(b));
+  const end = new Promise((resolve) => doc.on('end', resolve));
+
+  res.set('Content-Type', 'application/pdf');
+  res.set('Content-Disposition', 'attachment; filename="qrs-produccion.pdf"');
+  res.set('Cache-Control', 'private, no-store');
+
+  doc.pipe(res);
+
+  let index = 0;
+  const total = rows.length;
+  while (index < total) {
+    if (index > 0) {
+      doc.addPage();
+    }
+    for (let r = 0; r < rowsNum && index < total; r++) {
+      for (let c = 0; c < columnsNum && index < total; c++) {
+        const row = rows[index];
+        const x = marginPt + c * (cellPt + gapPt);
+        const y = marginPt + r * (cellPt + gapPt);
+        const qrUrl = buildPublicUrl(row.value);
+        let png;
+        try {
+          png = await generateQrBuffer(row.value);
+        } catch {
+          index += 1;
+          continue;
+        }
+        doc.image(png, x, y, { fit: [cellPt, cellPt], align: 'center', valign: 'center' });
+        doc.fontSize(7).fillColor('#0b1016').text(row.value, x, y + cellPt + 2, {
+          width: cellPt,
+          align: 'center',
+        });
+        index += 1;
+      }
+    }
+  }
+
+  doc.end();
+  await end;
+  return { sent: true };
+};
+
 module.exports = {
   generateIdentifierValue,
   buildPublicUrl,
@@ -851,4 +1255,13 @@ module.exports = {
   ensureOrCreatePendingQr,
   activateQr,
   ensureProfileTx,
+  listQrsAdmin,
+  qrStats,
+  linkQrToUser,
+  unlinkQrFromUser,
+  setQrPrintStatus,
+  fetchQrsByIds,
+  exportQrsByIdsCsv,
+  exportQrsByIdsZip,
+  exportQrsByIdsPdf,
 };

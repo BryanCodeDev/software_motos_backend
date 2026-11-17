@@ -2,15 +2,9 @@ const crypto = require('crypto');
 const db = require('../../config/db');
 const emailService = require('../../domains/email/email.service');
 const { activateQr } = require('../identifiers/identifier.service');
-const {
-  reservePackageForOrder,
-  releaseUserUnpaidReservations,
-  hasBlockingQr,
-} = require('../qr-inventory/qr-inventory.service');
 
 const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
 const STICKER_PACK_QUANTITY = 2;
-const RESERVATION_TTL_MINUTES = parseInt(process.env.QR_RESERVATION_TTL_MINUTES || '30', 10);
 
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -121,16 +115,6 @@ const createOrder = async (req, res) => {
       design = designs[0];
     }
 
-    // Un usuario solo puede tener un QR físico activo asignado mediante compra
-    // ordinaria. Si ya tiene un QR activo, impreso o entregado, se bloquea la compra.
-    if (requiresDesign && await hasBlockingQr(conn, userId)) {
-      await conn.query('ROLLBACK');
-      return res.status(409).json({
-        error: 'Ya tienes un QR físico activo asignado a tu cuenta.',
-        code: 'user_already_has_qr',
-      });
-    }
-
     let priceAdjustment = 0;
     if (variant_id) {
       const [variants] = await conn.query(
@@ -184,30 +168,6 @@ const createOrder = async (req, res) => {
       [result.insertId, product_id, product.name, itemUnitPrice, itemQuantity]
     );
 
-    // Inventario físico: reservar paquete disponible del diseño o marcar producción bajo pedido.
-    let inventoryOrigin = null;
-    let packageId = null;
-    if (requiresDesign) {
-      await releaseUserUnpaidReservations(conn, userId, result.insertId);
-      const reserved = await reservePackageForOrder(
-        conn,
-        design.id,
-        result.insertId,
-        userId,
-        RESERVATION_TTL_MINUTES
-      );
-      if (reserved) {
-        inventoryOrigin = 'inventory';
-        packageId = reserved.id;
-      } else {
-        inventoryOrigin = 'on_demand';
-      }
-      await conn.query(
-        'UPDATE orders SET inventory_origin = ?, package_id = ? WHERE id = ?',
-        [inventoryOrigin, packageId || null, result.insertId]
-      );
-    }
-
     if (totalAmount > 0) {
       await conn.query(
         'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
@@ -230,9 +190,6 @@ const createOrder = async (req, res) => {
       design_name: design ? design.name : null,
       design_image_url: design ? design.image_url : null,
       sticker_quantity: stickerQuantity,
-      inventory_origin: inventoryOrigin || null,
-      package_id: packageId || null,
-      production_required: inventoryOrigin === 'on_demand',
       commercial_status: commercialStatus,
       payment_status: paymentStatus,
       total_amount: totalAmount,
