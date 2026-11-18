@@ -2,6 +2,7 @@ const helmet = require('helmet');
 const cors = require('cors');
 const cookieParser = require('cookie-parser');
 const express = require('express');
+const path = require('path');
 const { errorHandler } = require('./middlewares/error-handler');
 const { notFound } = require('./middlewares/not-found');
 
@@ -29,6 +30,9 @@ const createApp = (apiRouter) => {
   app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
+
+  // Servir imágenes de diseños de stickers desde el frontend público.
+  app.use('/img', express.static(path.join(__dirname, '../../frontend/public/img')));
 
   app.use('/api', apiRouter);
 
