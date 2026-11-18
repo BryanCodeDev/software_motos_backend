@@ -1299,8 +1299,8 @@ const createQr = async ({ actorId, ipAddress = null }) => {
     const qrUrl = buildPublicUrl(value);
 
     const [result] = await conn.query(
-      'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, print_status) VALUES (NULL, NULL, NULL, ?, ?, ?)',
-      [value, 'pending_activation', 'pending_print']
+      'INSERT INTO identifiers (user_id, profile_id, order_id, value) VALUES (NULL, NULL, NULL, ?)',
+      [value]
     );
 
     await conn.query(
