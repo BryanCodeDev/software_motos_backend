@@ -6,6 +6,7 @@ const { z } = require('zod');
 const {
   listQrs,
   qrStats,
+  createQr,
   linkQr,
   unlinkQr,
   setPrintStatus,
