@@ -52,6 +52,7 @@ const exportSchema = z.object({
 
 router.get('/', catchAsync(listQrs));
 router.get('/stats', catchAsync(qrStats));
+router.post('/create', catchAsync(createQr));
 
 // Detalle y imagen de un QR (controlador de identificadores).
 const { getIdentifierDetail, getQrImage } = require('../identifiers/identifier.controller');

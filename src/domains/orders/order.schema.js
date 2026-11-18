@@ -20,4 +20,10 @@ const orderSchema = z.object({
   }),
 });
 
-module.exports = { orderSchema };
+const stickerOrderSchema = z.object({
+  body: z.object({
+    design_id: z.coerce.number().int().positive(),
+  }),
+});
+
+module.exports = { orderSchema, stickerOrderSchema };

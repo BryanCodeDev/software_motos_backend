@@ -176,16 +176,15 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
   try {
     await conn.query('START TRANSACTION');
 
-    // Bloquea TODOS los identificadores del usuario para evitar doble creación
-    // por webhooks o solicitudes simultáneas. La restricción de unicidad
-    // uq_identifiers_one_active_per_user refuerza esto en MySQL.
-    const [rows] = await conn.query(
+    // 1. Bloquea TODOS los identificadores del usuario para evitar doble creación
+    //    por webhooks o solicitudes simultáneas.
+    const [userRows] = await conn.query(
       'SELECT id, value, status, activation_at, order_id FROM identifiers WHERE user_id = ? FOR UPDATE',
       [userId]
     );
 
-    // Reutiliza el vigente (active o pending_activation). Nunca crea uno nuevo si ya existe.
-    const existing = rows.find((r) => r.status === 'active' || r.status === 'pending_activation');
+    // Reutiliza el vigente del usuario (active o pending_activation).
+    const existing = userRows.find((r) => r.status === 'active' || r.status === 'pending_activation');
 
     let identifier;
     if (existing) {
@@ -211,46 +210,84 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
         activation_at: existing.activation_at || new Date(),
       };
     } else {
-      // No hay QR previo: crear uno activo directamente vinculado al pedido.
-      const profile = await ensureProfileTx(conn, userId);
-      let value;
-      let tries = 0;
-      do {
-        value = generateIdentifierValue();
-        tries += 1;
-        const [exists] = await conn.query(
-          'SELECT id FROM identifiers WHERE value = ? FOR UPDATE',
-          [value]
+      // 2. Buscar un QR disponible sin asignar (user_id NULL) que no esté impreso/entregado/reemplazado.
+      const [availableRows] = await conn.query(
+        `SELECT id, value, status, print_status FROM identifiers
+         WHERE user_id IS NULL
+           AND status = 'pending_activation'
+           AND print_status NOT IN ('printed', 'delivered')
+           AND status NOT IN ('replaced')
+         ORDER BY created_at ASC
+         LIMIT 1
+         FOR UPDATE`,
+      );
+
+      if (availableRows.length > 0) {
+        const availableQr = availableRows[0];
+        // Asignar el QR disponible al usuario.
+        await conn.query(
+          'UPDATE identifiers SET user_id = ?, status = ?, activation_at = COALESCE(activation_at, NOW()), order_id = COALESCE(order_id, ?) WHERE id = ?',
+          [userId, 'active', orderId, availableQr.id]
         );
-        if (exists.length === 0) { break; }
-      } while (tries < MAX_IDENTIFIER_TRIES);
+        await conn.query(
+          'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+          [
+            userId,
+            'identifier.activate.available',
+            'identifiers',
+            String(availableQr.id),
+            JSON.stringify({ value: availableQr.value, order_id: orderId, previous_status: availableQr.status, previously_unlinked: true }),
+            ipAddress,
+          ]
+        );
+        identifier = {
+          id: availableQr.id,
+          value: availableQr.value,
+          status: 'active',
+          activation_at: new Date(),
+        };
+      } else {
+        // 3. No hay QR disponible: crear uno nuevo activo vinculado al pedido.
+        const profile = await ensureProfileTx(conn, userId);
+        let value;
+        let tries = 0;
+        do {
+          value = generateIdentifierValue();
+          tries += 1;
+          const [exists] = await conn.query(
+            'SELECT id FROM identifiers WHERE value = ? FOR UPDATE',
+            [value]
+          );
+          if (exists.length === 0) { break; }
+        } while (tries < MAX_IDENTIFIER_TRIES);
 
-      if (tries >= MAX_IDENTIFIER_TRIES) {
-        await conn.query('ROLLBACK');
-        return { error: 'identifier_generation_failed', status: 500 };
+        if (tries >= MAX_IDENTIFIER_TRIES) {
+          await conn.query('ROLLBACK');
+          return { error: 'identifier_generation_failed', status: 500 };
+        }
+
+        const [result] = await conn.query(
+          'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, activation_at) VALUES (?, ?, ?, ?, ?, NOW())',
+          [userId, profile.id, orderId, value, 'active']
+        );
+        identifier = {
+          id: result.insertId,
+          value,
+          status: 'active',
+          activation_at: new Date(),
+        };
+        await conn.query(
+          'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+          [
+            userId,
+            'identifier.create.active',
+            'identifiers',
+            String(result.insertId),
+            JSON.stringify({ value, order_id: orderId }),
+            ipAddress,
+          ]
+        );
       }
-
-      const [result] = await conn.query(
-        'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, activation_at) VALUES (?, ?, ?, ?, ?, NOW())',
-        [userId, profile.id, orderId, value, 'active']
-      );
-      identifier = {
-        id: result.insertId,
-        value,
-        status: 'active',
-        activation_at: new Date(),
-      };
-      await conn.query(
-        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [
-          userId,
-          'identifier.create.active',
-          'identifiers',
-          String(result.insertId),
-          JSON.stringify({ value, order_id: orderId }),
-          ipAddress,
-        ]
-      );
     }
 
     // Activar el perfil de emergencia asociado al QR activo.
@@ -1236,6 +1273,68 @@ const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
   return { sent: true };
 };
 
+/* ───────── Crear QR sin usuario (disponible para asignación posterior) ───────── */
+const createQr = async ({ actorId, ipAddress = null }) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    let value;
+    let tries = 0;
+    do {
+      value = generateIdentifierValue();
+      tries += 1;
+      const [exists] = await conn.query(
+        'SELECT id FROM identifiers WHERE value = ? FOR UPDATE',
+        [value]
+      );
+      if (exists.length === 0) { break; }
+    } while (tries < MAX_IDENTIFIER_TRIES);
+
+    if (tries >= MAX_IDENTIFIER_TRIES) {
+      await conn.query('ROLLBACK');
+      return { error: 'identifier_generation_failed', status: 500 };
+    }
+
+    const qrUrl = buildPublicUrl(value);
+
+    const [result] = await conn.query(
+      'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, print_status) VALUES (NULL, NULL, NULL, ?, ?, ?)',
+      [value, 'pending_activation', 'pending_print']
+    );
+
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'qr.create.available',
+        'identifiers',
+        String(result.insertId),
+        JSON.stringify({ value, qr_url: qrUrl, status: 'pending_activation', print_status: 'pending_print' }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+
+    return {
+      id: result.insertId,
+      value,
+      status: 'pending_activation',
+      print_status: 'pending_print',
+      qr_url: qrUrl,
+      user_id: null,
+      created_at: new Date(),
+    };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+
 module.exports = {
   generateIdentifierValue,
   buildPublicUrl,
@@ -1263,4 +1362,6 @@ module.exports = {
   exportQrsByIdsCsv,
   exportQrsByIdsZip,
   exportQrsByIdsPdf,
+  createQr,
 };
+

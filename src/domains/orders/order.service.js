@@ -5,6 +5,8 @@ const { activateQr } = require('../identifiers/identifier.service');
 
 const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
 const STICKER_PACK_QUANTITY = 2;
+const STICKER_FIXED_PRICE = 30000;
+const STICKER_CURRENCY = 'COP';
 
 const generateOrderNumber = () => {
   const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
@@ -230,8 +232,118 @@ const createOrder = async (req, res) => {
   }
 };
 
+/* ───────── Compra simplificada de stickers ─────────
+   Precio fijo $30.000 COP, un solo diseño, sin dirección de envío requerida.
+   El diseño se asocia al pedido (no al identificador QR).
+  ────────────────────────────────────────────────── */
+const createStickerOrder = async (req, res) => {
+  const { design_id } = req.validated.body;
+  const userId = req.user.id;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    // Obtener el producto de stickers (precio fijo en servidor, nunca desde el frontend)
+    const [products] = await conn.query(
+      `SELECT id, name, price, currency, slug FROM products WHERE slug = ? AND is_active = 1 AND is_purchasable = 1 LIMIT 1`,
+      [STICKER_PRODUCT_SLUG]
+    );
+    if (products.length === 0) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Producto de stickers no disponible', code: 'product_not_found' });
+    }
+    const product = products[0];
+
+    // Validar diseño existente y disponible
+    const [designs] = await conn.query(
+      'SELECT id, name, image_url FROM product_designs WHERE id = ? AND product_id = ? AND is_available = 1 LIMIT 1',
+      [design_id, product.id]
+    );
+    if (designs.length === 0) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Diseño no disponible', code: 'design_not_available' });
+    }
+    const design = designs[0];
+
+    // Precio fijo del servidor; el frontend no lo envía ni lo modifica
+    const totalAmount = STICKER_FIXED_PRICE;
+    const currency = STICKER_CURRENCY;
+    const orderNumber = generateOrderNumber();
+
+    const commercialStatus = 'pending_confirmation';
+    const paymentStatus = 'unpaid';
+
+    const [result] = await conn.query(
+      `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
+                           sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderNumber,
+        userId,
+        product.id,
+        null, // variant_id no aplica en este flujo
+        design.id,
+        design.name,
+        design.image_url,
+        STICKER_PACK_QUANTITY,
+        commercialStatus,
+        paymentStatus,
+        totalAmount,
+        currency,
+        null, // sin dirección de envío en este flujo simplificado
+        JSON.stringify({ tipo: 'compra_stickers_simplificada', diseño_seleccionado: design.id }),
+      ]
+    );
+
+    // Ítem del pedido: 2 stickers del mismo diseño, precio unitario = total / 2
+    const itemUnitPrice = parseFloat((totalAmount / STICKER_PACK_QUANTITY).toFixed(2));
+    await conn.query(
+      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, ?, ?, ?, ?)',
+      [result.insertId, product.id, product.name, itemUnitPrice, STICKER_PACK_QUANTITY]
+    );
+
+    // Evento de pago inicial
+    await conn.query(
+      'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
+      [result.insertId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency, design: { id: design.id, name: design.name } })]
+    );
+
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, 'order.create_stickers', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id: design.id, sticker_quantity: STICKER_PACK_QUANTITY }), null]
+    );
+
+    await conn.query('COMMIT');
+
+    const order = {
+      id: result.insertId,
+      order_number: orderNumber,
+      product_name: product.name,
+      design_id: design.id,
+      design_name: design.name,
+      design_image_url: design.image_url,
+      sticker_quantity: STICKER_PACK_QUANTITY,
+      commercial_status: commercialStatus,
+      payment_status: paymentStatus,
+      total_amount: totalAmount,
+      currency,
+    };
+
+    return res.status(201).json({ order });
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+
 module.exports = {
   listOrders,
   getOrder,
   createOrder,
+  createStickerOrder,
 };
+

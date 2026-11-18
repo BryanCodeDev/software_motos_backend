@@ -17,6 +17,12 @@ const qrStats = async (req, res) => {
   return res.json(result);
 };
 
+const createQr = async (req, res) => {
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.createQr({ actorId, ipAddress: req.ip });
+  return handleServiceResult(res, result, 201);
+};
+
 const linkQr = async (req, res) => {
   const { qr_id, user_id } = req.validated.body || {};
   const actorId = req.user && req.user.id ? req.user.id : null;
@@ -88,6 +94,7 @@ const exportByIds = async (req, res, format) => {
 module.exports = {
   listQrs,
   qrStats,
+  createQr,
   linkQr,
   unlinkQr,
   setPrintStatus,
