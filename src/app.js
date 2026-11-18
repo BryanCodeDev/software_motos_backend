@@ -31,8 +31,8 @@ const createApp = (apiRouter) => {
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-  // Servir imágenes de diseños de stickers desde el frontend público.
-  app.use('/img', express.static(path.join(__dirname, '../../frontend/public/img')));
+  // Servir imágenes de diseños de stickers (disponible en local y producción).
+  app.use('/img', express.static(path.join(__dirname, '../public/img')));
 
   app.use('/api', apiRouter);
 
