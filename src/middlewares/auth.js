@@ -53,7 +53,10 @@ const hasPermission = (role, permission) => {
 
 const authenticate = async (req, res, next) => {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+  // También se acepta el token en la cookie access_token (flujo de sesiones basado en cookies).
+  const cookieToken = req.cookies && req.cookies.access_token ? req.cookies.access_token : null;
+  const token = bearerToken || cookieToken;
   if (!token) {
     return res.status(401).json({ error: 'No autenticado' });
   }
