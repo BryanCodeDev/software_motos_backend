@@ -10,13 +10,12 @@ const {
   linkQr,
   unlinkQr,
   setPrintStatus,
+  archiveQr,
+  bulkPrintStatus,
   exportByIds,
 } = require('./qrs.controller');
 
 const router = express.Router();
-
-// Todas las rutas de administración QR requieren rol de administrador.
-router.use(authenticate, authorize('admin'));
 
 const qrIdSchema = z.object({
   params: z.object({ id: z.string().regex(/^\d+$/, 'ID de QR inválido') }),
@@ -44,6 +43,25 @@ const printStatusSchema = z.object({
   }),
 });
 
+const archiveSchema = z.object({
+  params: z.object({ id: z.string().regex(/^\d+$/, 'ID de QR inválido') }),
+  body: z.object({
+    reason: z.string().max(500).optional(),
+    force: z.boolean().optional(),
+  }),
+});
+
+const bulkPrintStatusSchema = z.object({
+  body: z.object({
+    qr_ids: z.array(
+      z.union([z.string().regex(/^\d+$/), z.number().int()])
+    ).min(1, 'Se requiere al menos un QR'),
+    print_status: z.enum([
+      'pending_print', 'sent_to_print', 'printed', 'delivered', 'cancelled',
+    ]),
+  }),
+});
+
 const exportSchema = z.object({
   query: z.object({
     ids: z.string().nonempty('Se requieren identificadores de QR'),
@@ -51,21 +69,27 @@ const exportSchema = z.object({
   }),
 });
 
-router.get('/', catchAsync(listQrs));
-router.get('/stats', catchAsync(qrStats));
-router.post('/create', catchAsync(createQr));
+router.get('/', authenticate, authorize('qrs:read'), catchAsync(listQrs));
+router.get('/stats', authenticate, authorize('qrs:read'), catchAsync(qrStats));
+router.post('/create', authenticate, authorize('qrs:write'), catchAsync(createQr));
 
 // Detalle y imagen de un QR (controlador de identificadores).
-const { getIdentifierDetail, getQrImage } = require('../identifiers/identifier.controller');
-router.get('/:id', validate(qrIdSchema), catchAsync(getIdentifierDetail));
-router.get('/:id/qr', validate(qrIdSchema), catchAsync(getQrImage));
+router.get('/:id', authenticate, authorize('qrs:read'), validate(qrIdSchema), catchAsync(require('../identifiers/identifier.controller').getIdentifierDetail));
+router.get('/:id/qr', authenticate, authorize('qrs:read'), validate(qrIdSchema), catchAsync(require('../identifiers/identifier.controller').getQrImage));
 
-router.post('/link', validate(linkSchema), catchAsync(linkQr));
-router.post('/unlink', validate(unlinkSchema), catchAsync(unlinkQr));
-router.post('/:id/print-status', validate(printStatusSchema), catchAsync(setPrintStatus));
+router.post('/link', authenticate, authorize('qrs:write'), validate(linkSchema), catchAsync(linkQr));
+router.post('/unlink', authenticate, authorize('qrs:write'), validate(unlinkSchema), catchAsync(unlinkQr));
 
-router.get('/export/csv', validate(exportSchema), (req, res) => exportByIds(req, res, 'csv'));
-router.get('/export/zip', validate(exportSchema), (req, res) => exportByIds(req, res, 'zip'));
-router.get('/export/pdf', validate(exportSchema), (req, res) => exportByIds(req, res, 'pdf'));
+// Acciones masivas de impresión (debe ir ANTES de las rutas con :id para no colisionar).
+router.post('/bulk/print-status', authenticate, authorize('qrs:bulk_actions'), validate(bulkPrintStatusSchema), catchAsync(bulkPrintStatus));
+
+router.post('/:id/print-status', authenticate, authorize('qrs:write'), validate(printStatusSchema), catchAsync(setPrintStatus));
+
+// Archivado lógico (no borrado físico).
+router.post('/:id/archive', authenticate, authorize('qrs:archive'), validate(archiveSchema), catchAsync(archiveQr));
+
+router.get('/export/csv', authenticate, authorize('qrs:export'), validate(exportSchema), (req, res) => exportByIds(req, res, 'csv'));
+router.get('/export/zip', authenticate, authorize('qrs:export'), validate(exportSchema), (req, res) => exportByIds(req, res, 'zip'));
+router.get('/export/pdf', authenticate, authorize('qrs:export'), validate(exportSchema), (req, res) => exportByIds(req, res, 'pdf'));
 
 module.exports = router;

@@ -59,6 +59,32 @@ const setPrintStatus = async (req, res) => {
   return handleServiceResult(res, result, 200);
 };
 
+const archiveQr = async (req, res) => {
+  const { id } = req.validated.params || {};
+  const { reason, force } = req.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.archiveQr({
+    qrId: id,
+    actorId,
+    reason,
+    ipAddress: req.ip,
+    force: force === true,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
+const bulkPrintStatus = async (req, res) => {
+  const { qr_ids, print_status } = req.validated.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.bulkUpdatePrintStatus({
+    qr_ids,
+    print_status,
+    actorId,
+    ipAddress: req.ip,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
 const exportByIds = async (req, res, format) => {
   const { ids } = req.query;
   if (!ids) {
@@ -98,5 +124,7 @@ module.exports = {
   linkQr,
   unlinkQr,
   setPrintStatus,
+  archiveQr,
+  bulkPrintStatus,
   exportByIds,
 };

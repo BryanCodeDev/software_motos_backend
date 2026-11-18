@@ -14,12 +14,17 @@ CREATE TABLE IF NOT EXISTS users (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
   email VARCHAR(255) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
-  role ENUM('user', 'admin') NOT NULL DEFAULT 'user',
+  role ENUM('user', 'admin', 'operator', 'superadmin') NOT NULL DEFAULT 'user',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  suspended_at TIMESTAMP NULL DEFAULT NULL COMMENT 'Fecha de suspensión de la cuenta',
+  suspended_by INT UNSIGNED NULL DEFAULT NULL COMMENT 'Administrador que suspendió la cuenta',
+  suspended_reason VARCHAR(255) NULL DEFAULT NULL COMMENT 'Motivo de la suspensión',
   PRIMARY KEY (id),
   UNIQUE KEY uk_users_email (email),
-  KEY idx_users_role (role)
+  KEY idx_users_role (role),
+  KEY idx_users_suspended (suspended_at),
+  CONSTRAINT fk_users_suspended_by FOREIGN KEY (suspended_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 002: Sesiones (refresh tokens)
@@ -130,6 +135,8 @@ CREATE TABLE IF NOT EXISTS identifiers (
   print_status ENUM('pending_print', 'sent_to_print', 'printed', 'delivered') NOT NULL DEFAULT 'pending_print',
   replaced_by_id INT UNSIGNED NULL DEFAULT NULL,
   deactivated_at TIMESTAMP NULL DEFAULT NULL,
+  archived_at TIMESTAMP NULL DEFAULT NULL COMMENT 'Fecha de archivado lógico (no se borra el registro)',
+  archived_by INT UNSIGNED NULL DEFAULT NULL COMMENT 'Administrador que archivó el identificador',
   package_id INT UNSIGNED NULL DEFAULT NULL COMMENT 'Paquete físico de sticker del cual proviene este identificador',
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -148,7 +155,8 @@ CREATE TABLE IF NOT EXISTS identifiers (
   CONSTRAINT fk_identifiers_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE SET NULL,
   CONSTRAINT fk_identifiers_replaced_by FOREIGN KEY (replaced_by_id) REFERENCES identifiers(id) ON DELETE SET NULL,
   CONSTRAINT fk_identifiers_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
-  CONSTRAINT fk_identifiers_package FOREIGN KEY (package_id) REFERENCES qr_inventory_packages(id) ON DELETE SET NULL
+  CONSTRAINT fk_identifiers_package FOREIGN KEY (package_id) REFERENCES qr_inventory_packages(id) ON DELETE SET NULL,
+  CONSTRAINT fk_identifiers_archived_by FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 008: Productos
@@ -203,6 +211,11 @@ CREATE TABLE IF NOT EXISTS orders (
   total_amount DECIMAL(12, 2) NOT NULL DEFAULT 0.00,
   currency CHAR(3) NOT NULL DEFAULT 'COP',
   shipping_address JSON NULL DEFAULT NULL,
+  carrier VARCHAR(100) NULL DEFAULT NULL COMMENT 'Transportadora asignada al envío',
+  tracking_number VARCHAR(100) NULL DEFAULT NULL COMMENT 'Número de guía de envío',
+  tracking_url VARCHAR(500) NULL DEFAULT NULL COMMENT 'URL de seguimiento del envío',
+  shipped_at TIMESTAMP NULL DEFAULT NULL COMMENT 'Fecha de despacho',
+  delivered_at TIMESTAMP NULL DEFAULT NULL COMMENT 'Fecha de entrega',
   customization JSON NULL DEFAULT NULL,
   mercado_pago_preference_id VARCHAR(100) NULL DEFAULT NULL,
   mercado_pago_payment_id VARCHAR(100) NULL DEFAULT NULL,
@@ -258,6 +271,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   entity_type VARCHAR(50) NOT NULL,
   entity_id VARCHAR(50) NOT NULL,
   metadata JSON NULL DEFAULT NULL,
+  previous_values JSON NULL DEFAULT NULL COMMENT 'Valor anterior del campo modificado',
+  new_values JSON NULL DEFAULT NULL COMMENT 'Valor nuevo asignado',
   ip_address VARCHAR(45) NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
@@ -434,6 +449,62 @@ CREATE TABLE IF NOT EXISTS qr_inventory_packages (
   CONSTRAINT fk_qr_inventory_packages_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL,
   CONSTRAINT fk_qr_inventory_packages_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT fk_qr_inventory_packages_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 022: Historial de cambios de estado de pedidos (auditoría operativa).
+CREATE TABLE IF NOT EXISTS order_status_history (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id INT UNSIGNED NOT NULL,
+  previous_commercial_status ENUM('draft','pending_confirmation','pending_payment','paid','preparing','shipped','delivered','cancelled','refund_requested','refunded') NULL DEFAULT NULL,
+  new_commercial_status ENUM('draft','pending_confirmation','pending_payment','paid','preparing','shipped','delivered','cancelled','refund_requested','refunded') NULL DEFAULT NULL,
+  previous_payment_status ENUM('unpaid','pending','approved','rejected','cancelled','refunded') NULL DEFAULT NULL,
+  new_payment_status ENUM('unpaid','pending','approved','rejected','cancelled','refunded') NULL DEFAULT NULL,
+  changed_by INT UNSIGNED NULL DEFAULT NULL,
+  reason VARCHAR(255) NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_order_status_history_order (order_id),
+  KEY idx_order_status_history_created (created_at),
+  CONSTRAINT fk_order_status_history_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  CONSTRAINT fk_order_status_history_changed_by FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 023: Registro de correos transaccionales enviados (idempotencia y trazabilidad).
+CREATE TABLE IF NOT EXISTS email_log (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id INT UNSIGNED NULL DEFAULT NULL,
+  user_id INT UNSIGNED NULL DEFAULT NULL,
+  type VARCHAR(50) NOT NULL,
+  to_email VARCHAR(255) NOT NULL,
+  subject VARCHAR(255) NOT NULL,
+  provider VARCHAR(30) NOT NULL DEFAULT 'resend',
+  provider_id VARCHAR(100) NULL DEFAULT NULL,
+  status ENUM('sent','failed','skipped_duplicate') NOT NULL DEFAULT 'sent',
+  error TEXT NULL DEFAULT NULL,
+  sent_at TIMESTAMP NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_email_log_order (order_id),
+  KEY idx_email_log_type_status (type, status),
+  KEY idx_email_log_created (created_at),
+  CONSTRAINT fk_email_log_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
+  CONSTRAINT fk_email_log_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 024: Métricas de escaneos QR (sin GPS, sin IP completa, sin datos médicos).
+CREATE TABLE IF NOT EXISTS qr_scans (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  identifier_id INT UNSIGNED NULL DEFAULT NULL,
+  identifier_value VARCHAR(80) NULL DEFAULT NULL,
+  scanned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  result ENUM('active','inactive','not_found') NOT NULL,
+  ip_hash VARCHAR(64) NULL DEFAULT NULL,
+  user_agent VARCHAR(500) NULL DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY idx_qr_scans_identifier (identifier_id),
+  KEY idx_qr_scans_scanned_at (scanned_at),
+  KEY idx_qr_scans_result (result),
+  CONSTRAINT fk_qr_scans_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 SET FOREIGN_KEY_CHECKS = 1;

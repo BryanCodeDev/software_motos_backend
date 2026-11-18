@@ -15,9 +15,9 @@ const router = express.Router();
 
 router.get('/', catchAsync(listProducts));
 router.get('/:id', catchAsync(getProduct));
-router.post('/', authenticate, authorize('admin'), validate(productSchema), catchAsync(createProduct));
-router.patch('/:id', authenticate, authorize('admin'), validate(productSchema), catchAsync(updateProduct));
-router.delete('/:id', authenticate, authorize('admin'), catchAsync(deleteProduct));
+router.post('/', authenticate, authorize('products:write'), validate(productSchema), catchAsync(createProduct));
+router.patch('/:id', authenticate, authorize('products:write'), validate(productSchema), catchAsync(updateProduct));
+router.delete('/:id', authenticate, authorize('products:write'), catchAsync(deleteProduct));
 
 module.exports = router;
 

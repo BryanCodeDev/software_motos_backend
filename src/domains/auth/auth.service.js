@@ -118,6 +118,15 @@ const login = async (req, res) => {
     return res.status(401).json({ error: 'Credenciales inválidas' });
   }
 
+  // Una cuenta suspendida no debe poder autenticarse.
+  if (user.suspended_at) {
+    return res.status(403).json({
+      error: 'Cuenta suspendida',
+      code: 'account_suspended',
+      reason: user.suspended_reason || null,
+    });
+  }
+
   const accessToken = createAccessToken({
     sub: user.id,
     email: user.email,

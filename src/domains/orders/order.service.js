@@ -340,10 +340,482 @@ const createStickerOrder = async (req, res) => {
 };
 
 
+const COMMERCIAL_STATUSES = [
+  'draft', 'pending_confirmation', 'pending_payment', 'paid', 'preparing',
+  'shipped', 'delivered', 'cancelled', 'refund_requested', 'refunded',
+];
+const PAYMENT_STATUSES = ['unpaid', 'pending', 'approved', 'rejected', 'cancelled', 'refunded'];
+
+/* Transiciones comerciales permitidas. Un pedido no puede saltar estados ni
+   retroceder salvo cancelación/reembolso explícito. */
+const COMMERCIAL_TRANSITIONS = {
+  draft: ['pending_confirmation', 'pending_payment', 'cancelled'],
+  pending_confirmation: ['pending_payment', 'paid', 'cancelled'],
+  pending_payment: ['paid', 'cancelled'],
+  paid: ['preparing', 'cancelled', 'refund_requested'],
+  preparing: ['shipped', 'cancelled'],
+  shipped: ['delivered', 'cancelled'],
+  delivered: [],
+  cancelled: [],
+  refund_requested: ['refunded', 'cancelled'],
+  refunded: [],
+};
+
+const isTerminal = (status) => ['delivered', 'cancelled', 'refunded'].includes(status);
+
+/* ───────── Administración: listado paginado con filtros ───────── */
+const adminListOrders = async (req, res) => {
+  const { q, status, payment_status, dateFrom, dateTo, page = '1', limit = '25' } = req.query;
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+  const offset = (p - 1) * l;
+
+  const where = [];
+  const params = [];
+  if (q) {
+    const numericQ = /^\d+$/.test(q) ? parseInt(q, 10) : null;
+    where.push('(o.order_number LIKE ? OR u.email LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+    if (numericQ) {
+      where.push('OR o.id = ?');
+      params.push(numericQ);
+    }
+  }
+  if (status && COMMERCIAL_STATUSES.includes(status)) {
+    where.push('AND o.commercial_status = ?');
+    params.push(status);
+  }
+  if (payment_status && PAYMENT_STATUSES.includes(payment_status)) {
+    where.push('AND o.payment_status = ?');
+    params.push(payment_status);
+  }
+  if (dateFrom) {
+    where.push('AND o.created_at >= ?');
+    params.push(dateFrom);
+  }
+  if (dateTo) {
+    where.push('AND o.created_at <= ?');
+    params.push(dateTo);
+  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' ') : '';
+
+  const rows = await db.query(
+    `SELECT o.id, o.order_number, o.commercial_status, o.payment_status, o.total_amount, o.currency,
+            o.carrier, o.tracking_number, o.tracking_url, o.shipped_at, o.delivered_at,
+            o.shipping_address, o.created_at, o.updated_at,
+            u.id AS user_id, u.email AS customer_email,
+            p.name AS product_name, o.design_name, o.sticker_quantity,
+            (SELECT i.value FROM identifiers i WHERE i.order_id = o.id ORDER BY i.created_at DESC LIMIT 1) AS qr_value
+     FROM orders o
+     JOIN users u ON o.user_id = u.id
+     JOIN products p ON o.product_id = p.id
+     ${whereSql}
+     ORDER BY o.created_at DESC
+     LIMIT ? OFFSET ?`,
+    params.concat([l, offset])
+  );
+  const [countRow] = await db.query(
+    `SELECT COUNT(*) AS total FROM orders o
+     JOIN users u ON o.user_id = u.id
+     JOIN products p ON o.product_id = p.id
+     ${whereSql}`,
+    params
+  );
+  return res.json({
+    orders: rows,
+    pagination: { page, limit: l, total: countRow.total, pages: Math.ceil(countRow.total / l) },
+  });
+};
+
+/* ───────── Administración: detalle completo del pedido ───────── */
+const adminGetOrder = async (req, res) => {
+  const { id } = req.params;
+  const orders = await db.query(
+    `SELECT o.id, o.order_number, o.commercial_status, o.payment_status, o.total_amount, o.currency,
+            o.carrier, o.tracking_number, o.tracking_url, o.shipped_at, o.delivered_at,
+            o.shipping_address, o.customization, o.created_at, o.updated_at,
+            o.mercado_pago_preference_id, o.mercado_pago_payment_id,
+            u.id AS user_id, u.email AS customer_email, u.role AS customer_role,
+            p.name AS product_name, p.slug AS product_slug,
+            o.design_id, o.design_name, o.design_image_url, o.sticker_quantity, o.variant_id
+     FROM orders o
+     JOIN users u ON o.user_id = u.id
+     JOIN products p ON o.product_id = p.id
+     WHERE o.id = ?`,
+    [id]
+  );
+  if (!orders.length) {
+    return res.status(404).json({ error: 'Pedido no encontrado' });
+  }
+  const order = orders[0];
+
+  const items = await db.query(
+    'SELECT id, product_id, name, price, quantity FROM order_items WHERE order_id = ? ORDER BY id',
+    [id]
+  );
+  const events = await db.query(
+    'SELECT id, type, status, amount, mp_payment_id, created_at FROM payment_events WHERE order_id = ? ORDER BY created_at DESC',
+    [id]
+  );
+  const history = await db.query(
+    `SELECT h.id, h.previous_commercial_status, h.new_commercial_status,
+            h.previous_payment_status, h.new_payment_status, h.reason, h.created_at,
+            u.email AS changed_by_email
+     FROM order_status_history h
+     LEFT JOIN users u ON u.id = h.changed_by
+     WHERE h.order_id = ?
+     ORDER BY h.created_at DESC`,
+    [id]
+  );
+  const qrs = await db.query(
+    'SELECT id, value, status, print_status, activation_at, created_at FROM identifiers WHERE order_id = ? ORDER BY created_at DESC',
+    [id]
+  );
+
+  let shippingAddress = null;
+  if (order.shipping_address) {
+    try {
+      shippingAddress = typeof order.shipping_address === 'string'
+        ? JSON.parse(order.shipping_address)
+        : order.shipping_address;
+    } catch { shippingAddress = null; }
+  }
+  let customization = null;
+  if (order.customization) {
+    try {
+      customization = typeof order.customization === 'string'
+        ? JSON.parse(order.customization)
+        : order.customization;
+    } catch { customization = null; }
+  }
+
+  return res.json({
+    order: {
+      ...order,
+      shipping_address: shippingAddress,
+      customization,
+      items,
+      payment_events: events,
+      status_history: history,
+      qrs,
+    },
+  });
+};
+
+/* ───────── Administración: cambio de estado con historial ───────── */
+const adminUpdateOrderStatus = async (req, res) => {
+  const { id } = req.params;
+  const { commercial_status, payment_status, reason } = req.body;
+  const actorId = req.user.id;
+
+  if (commercial_status === undefined && payment_status === undefined) {
+    return res.status(400).json({ error: 'Debe indicar al menos un estado para actualizar' });
+  }
+  if (commercial_status !== undefined && !COMMERCIAL_STATUSES.includes(commercial_status)) {
+    return res.status(400).json({ error: 'Estado comercial inválido' });
+  }
+  if (payment_status !== undefined && !PAYMENT_STATUSES.includes(payment_status)) {
+    return res.status(400).json({ error: 'Estado de pago inválido' });
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [orders] = await conn.query(
+      'SELECT id, user_id, order_number, commercial_status, payment_status FROM orders WHERE id = ? FOR UPDATE',
+      [id]
+    );
+    if (!orders.length) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    const order = orders[0];
+    const previous = {
+      commercial_status: order.commercial_status,
+      payment_status: order.payment_status,
+    };
+    const next = { ...previous };
+
+    let commercialChanged = false;
+    let paymentChanged = false;
+
+    if (commercial_status !== undefined && commercial_status !== order.commercial_status) {
+      if (isTerminal(order.commercial_status)) {
+        await conn.query('ROLLBACK');
+        return res.status(409).json({ error: 'El pedido está en un estado final y no puede cambiarse' });
+      }
+      const allowed = COMMERCIAL_TRANSITIONS[order.commercial_status] || [];
+      if (!allowed.includes(commercial_status)) {
+        await conn.query('ROLLBACK');
+        return res.status(400).json({ error: `Transición no permitida: ${order.commercial_status} → ${commercial_status}` });
+      }
+      next.commercial_status = commercial_status;
+      commercialChanged = true;
+    }
+
+    if (payment_status !== undefined && payment_status !== order.payment_status) {
+      // El pago aprobado solo se confirma explícitamente (webhook o operación de admin autorizada).
+      if (payment_status === 'approved') {
+        next.payment_status = 'approved';
+        if (next.commercial_status !== 'paid' && !isTerminal(next.commercial_status)) {
+          next.commercial_status = 'paid';
+          commercialChanged = true;
+        }
+      } else if (payment_status === 'rejected' || payment_status === 'cancelled') {
+        next.payment_status = payment_status;
+        if (!isTerminal(next.commercial_status)) {
+          next.commercial_status = payment_status === 'cancelled' ? 'cancelled' : 'cancelled';
+          commercialChanged = true;
+        }
+      } else {
+        next.payment_status = payment_status;
+      }
+      paymentChanged = true;
+    }
+
+    const updates = [];
+    const values = [];
+    if (commercialChanged) {
+      updates.push('commercial_status = ?');
+      values.push(next.commercial_status);
+    }
+    if (paymentChanged) {
+      updates.push('payment_status = ?');
+      values.push(next.payment_status);
+    }
+    if (commercial_status === 'paid' && payment_status === undefined && order.payment_status !== 'approved') {
+      // No se permite marcar pagado sin confirmación de pago válida.
+      await conn.query('ROLLBACK');
+      return res.status(400).json({ error: 'No se puede marcar como pagado sin una confirmación de pago válida' });
+    }
+    if (updates.length) {
+      values.push(id);
+      await conn.query(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`, values);
+    }
+
+    if (commercialChanged || paymentChanged) {
+      await conn.query(
+        `INSERT INTO order_status_history
+          (order_id, previous_commercial_status, new_commercial_status,
+           previous_payment_status, new_payment_status, changed_by, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [id, previous.commercial_status, next.commercial_status,
+         previous.payment_status, next.payment_status, actorId, reason || null]
+      );
+      await conn.query(
+        `INSERT INTO audit_logs
+          (actor_user_id, action, entity_type, entity_id, metadata, previous_values, new_values, ip_address)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          actorId, 'admin.order.status_change', 'orders', String(id),
+          JSON.stringify({ order_number: order.order_number, reason }),
+          JSON.stringify(previous), JSON.stringify(next), req.ip,
+        ]
+      );
+    }
+
+    await conn.query('COMMIT');
+
+    // Correos no bloqueantes según el nuevo estado.
+    const finalStatus = next.commercial_status;
+    try {
+      const [userRows] = await conn.query('SELECT email FROM users WHERE id = ?', [order.user_id]);
+      if (userRows.length) {
+        const emailService = require('../../domains/email/email.service');
+        const base = {
+          orderNumber: order.order_number,
+          totalAmount: order.total_amount,
+          currency: order.currency,
+          customerEmail: userRows[0].email,
+          orderId: order.id,
+          userId: order.user_id,
+        };
+        if (finalStatus === 'paid') {
+          await emailService.sendPaymentConfirmed(userRows[0].email, base);
+        } else if (finalStatus === 'preparing') {
+          await emailService.sendOrderPrepared(userRows[0].email, { ...base, status: 'preparing' });
+        } else if (finalStatus === 'shipped') {
+          await emailService.sendOrderShipped(userRows[0].email, {
+            ...base,
+            status: 'shipped',
+            carrier: order.carrier,
+            trackingNumber: order.tracking_number,
+            trackingUrl: order.tracking_url,
+          });
+        } else if (finalStatus === 'delivered') {
+          await emailService.sendOrderDelivered(userRows[0].email, base);
+        } else if (finalStatus === 'cancelled') {
+          await emailService.sendOrderCancelled(userRows[0].email, base);
+        }
+      }
+    } catch {
+      // El correo nunca bloquea la actualización del pedido.
+    }
+
+    return res.json({
+      message: 'Estado actualizado',
+      order: { id, order_number: order.order_number, previous, next },
+    });
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+/* ───────── Administración: transportadora y guía ───────── */
+const adminUpdateOrderCarrier = async (req, res) => {
+  const { id } = req.params;
+  const { carrier, tracking_number, tracking_url } = req.body;
+  const actorId = req.user.id;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [orders] = await conn.query(
+      'SELECT id, order_number, user_id, carrier, tracking_number, tracking_url, commercial_status FROM orders WHERE id = ? FOR UPDATE',
+      [id]
+    );
+    if (!orders.length) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    const order = orders[0];
+    const previous = { carrier: order.carrier, tracking_number: order.tracking_number, tracking_url: order.tracking_url };
+    const next = {
+      carrier: carrier !== undefined ? carrier : order.carrier,
+      tracking_number: tracking_number !== undefined ? tracking_number : order.tracking_number,
+      tracking_url: tracking_url !== undefined ? tracking_url : order.tracking_url,
+    };
+
+    const updates = [];
+    const values = [];
+    if (carrier !== undefined) { updates.push('carrier = ?'); values.push(carrier); }
+    if (tracking_number !== undefined) { updates.push('tracking_number = ?'); values.push(tracking_number); }
+    if (tracking_url !== undefined) { updates.push('tracking_url = ?'); values.push(tracking_url); }
+
+    if (updates.length) {
+      values.push(id);
+      await conn.query(`UPDATE orders SET ${updates.join(', ')} WHERE id = ?`, values);
+      // Si se registra guía y el pedido está pagado, avanzar a enviado si aún no lo está.
+      if (tracking_number && order.commercial_status === 'paid') {
+        await conn.query('UPDATE orders SET commercial_status = ? WHERE id = ?', ['shipped', id]);
+        await conn.query(
+          `INSERT INTO order_status_history
+            (order_id, previous_commercial_status, new_commercial_status,
+             previous_payment_status, new_payment_status, changed_by, reason)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+          [id, order.commercial_status, 'shipped', order.payment_status, order.payment_status, actorId, 'Envío registrado con guía']
+        );
+      }
+    }
+
+    await conn.query(
+      `INSERT INTO audit_logs
+        (actor_user_id, action, entity_type, entity_id, metadata, previous_values, new_values, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        actorId, 'admin.order.carrier_update', 'orders', String(id),
+        JSON.stringify({ order_number: order.order_number }),
+        JSON.stringify(previous), JSON.stringify(next), req.ip,
+      ]
+    );
+
+    await conn.query('COMMIT');
+
+    // Correo de envío no bloqueante.
+    try {
+      const [userRows] = await conn.query('SELECT email FROM users WHERE id = ?', [order.user_id]);
+      if (userRows.length && tracking_number) {
+        const emailService = require('../../domains/email/email.service');
+        await emailService.sendOrderShipped(userRows[0].email, {
+          orderNumber: order.order_number,
+          totalAmount: order.total_amount,
+          currency: order.currency,
+          customerEmail: userRows[0].email,
+          orderId: order.id,
+          userId: order.user_id,
+          status: 'shipped',
+          carrier: next.carrier,
+          trackingNumber: next.tracking_number,
+          trackingUrl: next.tracking_url,
+        });
+      }
+    } catch {
+      // No bloquear.
+    }
+
+    return res.json({
+      message: 'Información de envío actualizada',
+      order: { id, order_number: order.order_number, previous, next },
+    });
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+/* ───────── Administración: reenvío de correo de pedido ───────── */
+const adminResendOrderEmail = async (req, res) => {
+  const { id } = req.params;
+  const { type } = req.body;
+  const allowedTypes = ['payment_confirmed', 'preparing', 'shipped', 'delivered', 'cancelled'];
+  if (!type || !allowedTypes.includes(type)) {
+    return res.status(400).json({ error: 'Tipo de correo no válido' });
+  }
+
+  const [orders] = await db.query(
+    'SELECT o.id, o.order_number, o.user_id, o.total_amount, o.currency, o.carrier, o.tracking_number, o.tracking_url, u.email FROM orders o JOIN users u ON u.id = o.user_id WHERE o.id = ?',
+    [id]
+  );
+  if (!orders.length) {
+    return res.status(404).json({ error: 'Pedido no encontrado' });
+  }
+  const order = orders[0];
+
+  try {
+    const emailService = require('../../domains/email/email.service');
+    const base = {
+      orderNumber: order.order_number,
+      totalAmount: order.total_amount,
+      currency: order.currency,
+      customerEmail: order.email,
+    };
+    let result;
+    if (type === 'payment_confirmed') {
+      result = await emailService.sendPaymentConfirmed(order.email, base);
+    } else if (type === 'preparing') {
+      result = await emailService.sendOrderPrepared(order.email, { ...base, status: 'preparing' });
+    } else if (type === 'shipped') {
+      result = await emailService.sendOrderShipped(order.email, {
+        ...base, status: 'shipped',
+        carrier: order.carrier, trackingNumber: order.tracking_number, trackingUrl: order.tracking_url,
+      });
+    } else if (type === 'delivered') {
+      result = await emailService.sendOrderDelivered(order.email, base);
+    } else if (type === 'cancelled') {
+      result = await emailService.sendOrderCancelled(order.email, base);
+    }
+    return res.json({ message: 'Correo enviado', sent: Boolean(result && result.sent), provider: result ? result.provider : null });
+  } catch (error) {
+    return res.status(500).json({ error: 'No se pudo enviar el correo', detail: error.message });
+  }
+};
+
 module.exports = {
   listOrders,
   getOrder,
   createOrder,
   createStickerOrder,
+  adminListOrders,
+  adminGetOrder,
+  adminUpdateOrderStatus,
+  adminUpdateOrderCarrier,
+  adminResendOrderEmail,
 };
 

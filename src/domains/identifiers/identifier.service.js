@@ -824,57 +824,184 @@ const exportQrsPdf = async (req, res) => {
 };
 
 // ---------------------------------------------------------------------------
-// Control de impresión: actualizar estado en lote.
+// Archivado lógico de un QR (no DELETE físico).
 // ---------------------------------------------------------------------------
-const bulkUpdatePrintStatus = async (req, res) => {
-  const { user_ids, print_status } = req.body;
-  if (!Array.isArray(user_ids) || user_ids.length === 0) {
-    return res.status(400).json({ error: 'Faltan usuarios', code: 'missing_user_ids' });
-  }
-  const allowed = ['pending_print', 'sent_to_print', 'printed', 'delivered'];
-  if (!allowed.includes(print_status)) {
-    return res.status(400).json({ error: 'Estado de impresión inválido', code: 'invalid_print_status' });
-  }
-
-  const idList = user_ids.map((x) => parseInt(x, 10)).filter((x) => !Number.isNaN(x));
-  if (idList.length === 0) {
-    return res.status(400).json({ error: 'Usuarios inválidos', code: 'invalid_user_ids' });
-  }
-
-  const placeholders = idList.map(() => '?').join(',');
+const archiveQr = async ({ qrId, actorId, reason = null, ipAddress = null, force = false }) => {
   const conn = await db.getConnection();
   try {
     await conn.query('START TRANSACTION');
 
-    await conn.query(
-      `UPDATE identifiers i
-       JOIN users u ON u.id = i.user_id
-       SET i.print_status = ?
-       WHERE u.id IN (${placeholders})`,
-      [print_status, ...idList]
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, status, print_status, archived_at, order_id FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
     );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+    if (qr.archived_at) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_already_archived', status: 409 };
+    }
 
+    // No archivar un QR vinculado a un pedido en producción o envío, salvo
+    // operación administrativa explícita y auditada (force).
+    if (!force && qr.order_id) {
+      const [orders] = await conn.query(
+        'SELECT id, order_number, commercial_status, payment_status FROM orders WHERE id = ?',
+        [qr.order_id]
+      );
+      if (orders.length) {
+        const order = orders[0];
+        if (['preparing', 'shipped', 'delivered'].includes(order.commercial_status)) {
+          await conn.query('ROLLBACK');
+          return {
+            error: 'qr_in_production_or_shipping',
+            status: 409,
+            detail: `El QR está vinculado al pedido ${order.order_number} en estado ${order.commercial_status}.`,
+          };
+        }
+      }
+    }
+
+    await conn.query(
+      'UPDATE identifiers SET archived_at = NOW(), archived_by = ? WHERE id = ?',
+      [actorId, qrId]
+    );
     await conn.query(
       'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
       [
-        req.user.id,
-        'admin.qr.bulk_print_status',
+        actorId,
+        'qr.archive',
         'identifiers',
-        String(idList.length),
-        JSON.stringify({ print_status, user_count: idList.length, user_ids: idList }),
-        req.ip,
+        String(qrId),
+        JSON.stringify({ value: qr.value, reason, previous_user_id: qr.user_id, order_id: qr.order_id }),
+        ipAddress,
       ]
     );
 
     await conn.query('COMMIT');
+    return { qr_id: qrId, value: qr.value, archived: true };
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
     throw error;
   } finally {
     conn.release();
   }
+};
 
-  return res.json({ message: `Estado de impresión actualizado a ${print_status}`, count: idList.length });
+// ---------------------------------------------------------------------------
+// Control de impresión: actualizar estado en lote con validación por registro.
+// ---------------------------------------------------------------------------
+const bulkUpdatePrintStatus = async ({ qr_ids, print_status, actorId, ipAddress = null }) => {
+  if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
+    return { error: 'missing_qr_ids', status: 400 };
+  }
+  const allowed = ['pending_print', 'sent_to_print', 'printed', 'delivered', 'cancelled'];
+  if (!allowed.includes(print_status)) {
+    return { error: 'invalid_print_status', status: 400 };
+  }
+
+  // Ordenar para adquirir bloqueos en orden determinista y evitar interbloqueos.
+  const idList = qr_ids
+    .map((x) => parseInt(x, 10))
+    .filter((x) => Number.isFinite(x))
+    .sort((a, b) => a - b);
+  if (idList.length === 0) {
+    return { error: 'invalid_qr_ids', status: 400 };
+  }
+
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      `SELECT id, value, user_id, print_status, archived_at, order_id
+       FROM identifiers WHERE id IN (${idList.map(() => '?').join(',')}) FOR UPDATE`,
+      idList
+    );
+    const qrById = {};
+    for (const qr of qrRows) { qrById[qr.id] = qr; }
+
+    const orderIds = [...new Set(qrRows.map((q) => q.order_id).filter(Boolean))];
+    const ordersById = {};
+    if (orderIds.length) {
+      const [orders] = await conn.query(
+        `SELECT id, order_number, payment_status, commercial_status FROM orders WHERE id IN (${orderIds.map(() => '?').join(',')})`,
+        orderIds
+      );
+      for (const o of orders) { ordersById[o.id] = o; }
+    }
+
+    const accepted = [];
+    const rejected = [];
+
+    for (const qrId of idList) {
+      const qr = qrById[qrId];
+      if (!qr) {
+        rejected.push({ qr_id: qrId, reason: 'qr_not_found' });
+        continue;
+      }
+      if (qr.archived_at) {
+        rejected.push({ qr_id: qrId, reason: 'qr_archived' });
+        continue;
+      }
+      // Los estados de producción requieren un pedido con pago aprobado.
+      if (['sent_to_print', 'printed', 'delivered'].includes(print_status)) {
+        const order = qr.order_id ? ordersById[qr.order_id] : null;
+        if (!order || order.payment_status !== 'approved') {
+          rejected.push({
+            qr_id: qrId,
+            reason: 'no_paid_order',
+            detail: 'El QR no tiene un pedido asociado con pago aprobado.',
+          });
+          continue;
+        }
+      }
+
+      const previous = qr.print_status;
+      await conn.query('UPDATE identifiers SET print_status = ? WHERE id = ?', [print_status, qrId]);
+      await conn.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          actorId,
+          'qr.print_status_change',
+          'identifiers',
+          String(qrId),
+          JSON.stringify({ value: qr.value, previous_print_status: previous, new_print_status: print_status }),
+          ipAddress,
+        ]
+      );
+      accepted.push({ qr_id: qrId, value: qr.value, previous_print_status: previous, print_status });
+    }
+
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'admin.qr.bulk_print_status',
+        'identifiers',
+        String(idList.length),
+        JSON.stringify({ print_status, accepted_count: accepted.length, rejected_count: rejected.length, accepted, rejected }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return {
+      accepted,
+      rejected,
+      accepted_count: accepted.length,
+      rejected_count: rejected.length,
+      print_status,
+    };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
 };
 
 // ---------------------------------------------------------------------------
@@ -884,7 +1011,7 @@ const bulkUpdatePrintStatus = async (req, res) => {
 const listQrsAdmin = async (filters = {}) => {
   const {
     q, user_id, status, print_status, design_id, from, to,
-    linked, page = 1, limit = 25,
+    linked, archived, page = 1, limit = 25,
   } = filters;
 
   const where = [];
@@ -895,6 +1022,10 @@ const listQrsAdmin = async (filters = {}) => {
   if (print_status) { where.push('i.print_status = ?'); params.push(print_status); }
   if (linked === 'true') { where.push('i.user_id IS NOT NULL'); }
   else if (linked === 'false') { where.push('i.user_id IS NULL'); }
+  // Archivado lógico: por defecto se excluyen los QR archivados de las listas operativas.
+  if (archived === 'true') { where.push('i.archived_at IS NOT NULL'); }
+  else if (archived === 'all') { /* se incluyen ambos */ }
+  else { where.push('i.archived_at IS NULL'); }
   if (from) { where.push('i.created_at >= ?'); params.push(from); }
   if (to) { where.push('i.created_at <= ?'); params.push(to); }
   const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -909,7 +1040,8 @@ const listQrsAdmin = async (filters = {}) => {
 
   const rows = await db.query(
     `SELECT i.id, i.user_id, i.value, i.status, i.activation_at, i.print_status,
-            i.created_at, i.updated_at, i.deactivated_at, i.order_id, i.replaced_by_id,
+            i.created_at, i.updated_at, i.deactivated_at, i.archived_at, i.archived_by,
+            i.order_id, i.replaced_by_id,
             u.email, u.role, u.created_at AS user_created_at,
             o.order_number, o.design_id, o.design_name, o.sticker_quantity
      FROM identifiers i
@@ -940,6 +1072,8 @@ const listQrsAdmin = async (filters = {}) => {
       created_at: r.created_at,
       updated_at: r.updated_at,
       deactivated_at: r.deactivated_at,
+      archived_at: r.archived_at,
+      archived_by: r.archived_by,
       order_id: r.order_id,
       replaced_by_id: r.replaced_by_id,
       user: { id: r.user_id, email: r.email, role: r.role, created_at: r.user_created_at },
@@ -1334,6 +1468,27 @@ const createQr = async ({ actorId, ipAddress = null }) => {
   }
 };
 
+// Registro de escaneos QR (métricas de uso). Tolerante a fallos: nunca rompe
+// la carga del perfil público. No almacena GPS, IP completa ni datos médicos.
+const recordScan = async ({ identifierValue, result, ipHash, userAgent } = {}) => {
+  try {
+    if (!['active', 'inactive', 'not_found'].includes(result)) {
+      result = 'not_found';
+    }
+    let identifierId = null;
+    if (identifierValue) {
+      const idRows = await db.query('SELECT id FROM identifiers WHERE value = ? LIMIT 1', [identifierValue]);
+      if (idRows.length) { identifierId = idRows[0].id; }
+    }
+    await db.query(
+      'INSERT INTO qr_scans (identifier_id, identifier_value, result, ip_hash, user_agent) VALUES (?, ?, ?, ?, ?)',
+      [identifierId, identifierValue || null, result, ipHash || null, userAgent || null]
+    );
+    return { recorded: true };
+  } catch {
+    return { recorded: false };
+  }
+};
 
 module.exports = {
   generateIdentifierValue,
@@ -1363,5 +1518,8 @@ module.exports = {
   exportQrsByIdsZip,
   exportQrsByIdsPdf,
   createQr,
+  archiveQr,
+  bulkUpdatePrintStatus,
+  recordScan,
 };
 

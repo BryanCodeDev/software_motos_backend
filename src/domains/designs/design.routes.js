@@ -19,11 +19,11 @@ const router = express.Router();
 router.get('/', validate(designQuerySchema), catchAsync(listDesigns));
 
 // Administrador: gestión de diseños.
-router.get('/admin', authenticate, authorize('admin'), catchAsync(adminListDesigns));
+router.get('/admin', authenticate, authorize('designs:write'), catchAsync(adminListDesigns));
 router.patch(
   '/admin/:id',
   authenticate,
-  authorize('admin'),
+  authorize('designs:write'),
   validate(designParamsSchema),
   validate(updateDesignSchema),
   catchAsync(updateDesign)

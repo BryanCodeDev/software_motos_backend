@@ -1,5 +1,6 @@
 const { Resend } = require('resend');
 const config = require('../../config');
+const db = require('../../config/db');
 
 let resend = null;
 if (config.resend.apiKey) {
@@ -30,6 +31,60 @@ const send = async ({ to, subject, html, text }) => {
   } catch (error) {
     return { provider: 'resend', sent: false, error: error.message };
   }
+};
+
+/*
+ * Envío idempotente de correo de pedido. Evita duplicados consultando email_log:
+ * si ya existe un registro 'sent' para la misma orden y tipo, se omite el envío.
+ * Nunca bloquea al llamante: devuelve el resultado aunque Resend falle.
+ */
+const sendOrderEmail = async ({
+  orderId,
+  userId,
+  type,
+  to,
+  subject,
+  html,
+  text,
+}) => {
+  try {
+    const existing = await db.query(
+      `SELECT id FROM email_log
+       WHERE order_id = ? AND type = ? AND status = 'sent'
+       ORDER BY created_at DESC LIMIT 1`,
+      [orderId, type]
+    );
+    if (existing.length > 0) {
+      return { provider: 'resend', sent: true, skipped: true, reason: 'duplicate' };
+    }
+  } catch {
+    // Si la tabla aún no existe, continuar con el envío normal.
+  }
+
+  const result = await send({ to, subject, html, text });
+  const status = result.sent ? 'sent' : 'failed';
+  try {
+    await db.query(
+      `INSERT INTO email_log
+        (order_id, user_id, type, to_email, subject, provider, provider_id, status, error, sent_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderId || null,
+        userId || null,
+        type,
+        to,
+        subject,
+        result.provider || 'resend',
+        result.id || null,
+        status,
+        result.error || null,
+        result.sent ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null,
+      ]
+    );
+  } catch {
+    // No bloquear el resultado del envío si falla el registro de log.
+  }
+  return result;
 };
 
 const renderBase = ({ title, body }) => `
@@ -150,13 +205,85 @@ Estado: ${order.status}`,
   });
 };
 
+const sendOrderPrepared = async (to, order) => {
+  return sendOrderEmail({
+    to,
+    userId: order.userId || null,
+    orderId: order.orderId || null,
+    type: 'preparing',
+    subject: `Tu pedido ${order.orderNumber} está en preparación`,
+    text: `Tu pedido ${order.orderNumber} pasó a estado: En preparación.`,
+    html: renderBase({
+      title: 'Pedido en preparación',
+      body: `Tu pedido <strong>${order.orderNumber}</strong> está siendo preparado para impresión y despacho.<br>
+Monto: <strong>${order.totalAmount} ${order.currency}</strong>.`,
+    }),
+  });
+};
+
+const sendOrderShipped = async (to, order) => {
+  const carrierLine = order.carrier ? `<br>Transportadora: <strong>${order.carrier}</strong>` : '';
+  const guideLine = order.trackingNumber ? `<br>Número de guía: <strong>${order.trackingNumber}</strong>` : '';
+  const trackLine = order.trackingUrl ? `<br>Seguimiento: <a href="${order.trackingUrl}" style="color:#22d3ee;">Ver rastreo</a>` : '';
+  return sendOrderEmail({
+    to,
+    userId: order.userId || null,
+    orderId: order.orderId || null,
+    type: 'shipped',
+    subject: `Tu pedido ${order.orderNumber} fue despachado`,
+    text: `Tu pedido ${order.orderNumber} fue enviado.${carrierLine}${guideLine}${order.trackingUrl ? ' Seguimiento: ' + order.trackingUrl : ''}.`,
+    html: renderBase({
+      title: 'Pedido despachado',
+      body: `Tu pedido <strong>${order.orderNumber}</strong> ha sido despachado.<br>
+Monto: <strong>${order.totalAmount} ${order.currency}</strong>.${carrierLine}${guideLine}${trackLine}`,
+    }),
+  });
+};
+
+const sendOrderDelivered = async (to, order) => {
+  return sendOrderEmail({
+    to,
+    userId: order.userId || null,
+    orderId: order.orderId || null,
+    type: 'delivered',
+    subject: `Tu pedido ${order.orderNumber} fue entregado`,
+    text: `Tu pedido ${order.orderNumber} ha sido entregado.`,
+    html: renderBase({
+      title: 'Pedido entregado',
+      body: `Tu pedido <strong>${order.orderNumber}</strong> ha sido entregado correctamente.<br>
+Gracias por confiar en Tu QR te Cuida.`,
+    }),
+  });
+};
+
+const sendOrderCancelled = async (to, order) => {
+  return sendOrderEmail({
+    to,
+    userId: order.userId || null,
+    orderId: order.orderId || null,
+    type: 'cancelled',
+    subject: `Tu pedido ${order.orderNumber} fue cancelado`,
+    text: `Tu pedido ${order.orderNumber} fue cancelado.`,
+    html: renderBase({
+      title: 'Pedido cancelado',
+      body: `Tu pedido <strong>${order.orderNumber}</strong> fue cancelado.<br>
+Si crees que es un error, escríbenos a soporte.`,
+    }),
+  });
+};
+
 module.exports = {
   send,
+  sendOrderEmail,
   sendPasswordReset,
   sendEmailVerification,
   sendOrderConfirmation,
   sendPaymentConfirmed,
   sendOrderStatusChanged,
+  sendOrderPrepared,
+  sendOrderShipped,
+  sendOrderDelivered,
+  sendOrderCancelled,
   sendAdminNewOrder,
 };
 

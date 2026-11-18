@@ -1,14 +1,35 @@
 const db = require('../../config/db');
 
-const listProducts = async (_req, res) => {
+const listProducts = async (req, res) => {
+  const { q, page = '1', limit = '25' } = req.query;
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 25));
+  const offset = (p - 1) * l;
+
+  const where = [];
+  const params = [];
+  if (q) {
+    where.push('(p.name LIKE ? OR p.slug LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
   const rows = await db.query(
-    `SELECT p.*, 
+    `SELECT p.*,
           (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', v.id, 'name', v.name, 'price_adjustment', v.price_adjustment, 'is_active', v.is_active, 'sort_order', v.sort_order))
            FROM product_variants v WHERE v.product_id = p.id AND v.is_active = 1 ORDER BY v.sort_order, v.id) AS variants
      FROM products p
-     ORDER BY p.sort_order ASC, p.id ASC`
+     ${whereSql}
+     ORDER BY p.sort_order ASC, p.id ASC
+     LIMIT ? OFFSET ?`,
+    params.concat([l, offset])
   );
-const products = rows.map((row) => {
+  const [countRow] = await db.query(
+    `SELECT COUNT(*) AS total FROM products p ${whereSql}`,
+    params
+  );
+
+  const products = rows.map((row) => {
     let variants = row.variants;
     if (typeof variants === 'string') {
       try {
@@ -23,7 +44,10 @@ const products = rows.map((row) => {
     }
     return { ...row, variants };
   });
-  return res.json({ products });
+  return res.json({
+    products,
+    pagination: { page: p, limit: l, total: countRow.total, pages: Math.ceil(countRow.total / l) },
+  });
 };
 
 const getProduct = async (req, res) => {

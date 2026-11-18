@@ -234,6 +234,104 @@ const ensurePrivacySchema = async () => {
   try { await query(createIndex); } catch (e) { if (!ignoreDup(e)) {throw e;} }
 };
 
+// ---------------------------------------------------------------------------
+// Esquema de administración de pedidos, auditoría, archivado y métricas.
+// Aditivo e idempotente: no borra tablas, columnas ni datos históricos.
+// ---------------------------------------------------------------------------
+const ensureAdminOrderSchema = async () => {
+  const addColumn = async (sql) => {
+    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  };
+  const addConstraint = async (sql) => {
+    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  };
+
+  // 1. Historial de cambios de estado de pedidos.
+  await query(`
+    CREATE TABLE IF NOT EXISTS order_status_history (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      order_id INT UNSIGNED NOT NULL,
+      previous_commercial_status ENUM('draft','pending_confirmation','pending_payment','paid','preparing','shipped','delivered','cancelled','refund_requested','refunded') NULL DEFAULT NULL,
+      new_commercial_status ENUM('draft','pending_confirmation','pending_payment','paid','preparing','shipped','delivered','cancelled','refund_requested','refunded') NULL DEFAULT NULL,
+      previous_payment_status ENUM('unpaid','pending','approved','rejected','cancelled','refunded') NULL DEFAULT NULL,
+      new_payment_status ENUM('unpaid','pending','approved','rejected','cancelled','refunded') NULL DEFAULT NULL,
+      changed_by INT UNSIGNED NULL DEFAULT NULL,
+      reason VARCHAR(255) NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_order_status_history_order (order_id),
+      KEY idx_order_status_history_created (created_at),
+      CONSTRAINT fk_order_status_history_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+      CONSTRAINT fk_order_status_history_changed_by FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 2. Registro de correos enviados (idempotencia y trazabilidad).
+  await query(`
+    CREATE TABLE IF NOT EXISTS email_log (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      order_id INT UNSIGNED NULL DEFAULT NULL,
+      user_id INT UNSIGNED NULL DEFAULT NULL,
+      type VARCHAR(50) NOT NULL,
+      to_email VARCHAR(255) NOT NULL,
+      subject VARCHAR(255) NOT NULL,
+      provider VARCHAR(30) NOT NULL DEFAULT 'resend',
+      provider_id VARCHAR(100) NULL DEFAULT NULL,
+      status ENUM('sent','failed','skipped_duplicate') NOT NULL DEFAULT 'sent',
+      error TEXT NULL DEFAULT NULL,
+      sent_at TIMESTAMP NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_email_log_order (order_id),
+      KEY idx_email_log_type_status (type, status),
+      KEY idx_email_log_created (created_at),
+      CONSTRAINT fk_email_log_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
+      CONSTRAINT fk_email_log_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 3. Métricas de escaneos QR (sin GPS, sin IP completa, sin datos médicos).
+  await query(`
+    CREATE TABLE IF NOT EXISTS qr_scans (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      identifier_id INT UNSIGNED NULL DEFAULT NULL,
+      identifier_value VARCHAR(80) NULL DEFAULT NULL,
+      scanned_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      result ENUM('active','inactive','not_found') NOT NULL,
+      ip_hash VARCHAR(64) NULL DEFAULT NULL,
+      user_agent VARCHAR(500) NULL DEFAULT NULL,
+      PRIMARY KEY (id),
+      KEY idx_qr_scans_identifier (identifier_id),
+      KEY idx_qr_scans_scanned_at (scanned_at),
+      KEY idx_qr_scans_result (result),
+      CONSTRAINT fk_qr_scans_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 4. Pedidos: transportadora, guía y seguimiento (copia operativa).
+  await addColumn("ALTER TABLE orders ADD COLUMN carrier VARCHAR(100) NULL DEFAULT NULL AFTER shipping_address");
+  await addColumn("ALTER TABLE orders ADD COLUMN tracking_number VARCHAR(100) NULL DEFAULT NULL AFTER carrier");
+  await addColumn("ALTER TABLE orders ADD COLUMN tracking_url VARCHAR(500) NULL DEFAULT NULL AFTER tracking_number");
+  await addColumn("ALTER TABLE orders ADD COLUMN shipped_at TIMESTAMP NULL DEFAULT NULL AFTER tracking_url");
+  await addColumn("ALTER TABLE orders ADD COLUMN delivered_at TIMESTAMP NULL DEFAULT NULL AFTER shipped_at");
+
+  // 5. Identificadores QR: archivado lógico (no DELETE físico).
+  await addColumn("ALTER TABLE identifiers ADD COLUMN archived_at TIMESTAMP NULL DEFAULT NULL AFTER deactivated_at");
+  await addColumn("ALTER TABLE identifiers ADD COLUMN archived_by INT UNSIGNED NULL DEFAULT NULL AFTER archived_at");
+  await addConstraint("ALTER TABLE identifiers ADD CONSTRAINT fk_identifiers_archived_by FOREIGN KEY (archived_by) REFERENCES users(id) ON DELETE SET NULL");
+
+  // 6. Usuarios: suspensión y roles extendidos (superadmin, operator).
+  await addColumn("ALTER TABLE users ADD COLUMN suspended_at TIMESTAMP NULL DEFAULT NULL AFTER updated_at");
+  await addColumn("ALTER TABLE users ADD COLUMN suspended_by INT UNSIGNED NULL DEFAULT NULL AFTER suspended_at");
+  await addColumn("ALTER TABLE users ADD COLUMN suspended_reason VARCHAR(255) NULL DEFAULT NULL AFTER suspended_by");
+  await addConstraint("ALTER TABLE users ADD CONSTRAINT fk_users_suspended_by FOREIGN KEY (suspended_by) REFERENCES users(id) ON DELETE SET NULL");
+  await query("ALTER TABLE users MODIFY COLUMN role ENUM('user','admin','operator','superadmin') NOT NULL DEFAULT 'user'");
+
+  // 7. Auditoría: valores anterior y nuevo.
+  await addColumn("ALTER TABLE audit_logs ADD COLUMN previous_values JSON NULL DEFAULT NULL AFTER metadata");
+  await addColumn("ALTER TABLE audit_logs ADD COLUMN new_values JSON NULL DEFAULT NULL AFTER previous_values");
+};
+
 const getConnection = async () => getPool().getConnection();
 
 const close = async () => {
@@ -253,4 +351,5 @@ module.exports = {
   ensureDesignAndOrderColumns,
   ensureInventorySchema,
   ensurePrivacySchema,
+  ensureAdminOrderSchema,
 };

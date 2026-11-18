@@ -30,6 +30,15 @@ const start = async () => {
     console.warn('[PRIVACIDAD] No se pudieron sincronizar tablas de privacidad:', err.message);
   }
 
+  // Sincronizar esquema de administración de pedidos (historial, correo,
+  // archivado de QR, suspensión de usuarios, métricas de escaneo).
+  try {
+    await db.ensureAdminOrderSchema();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[ADMIN-ORDER] No se pudieron sincronizar tablas de administración:', err.message);
+  }
+
   const routes = require('./routes');
   const serverApp = createApp(routes);
 

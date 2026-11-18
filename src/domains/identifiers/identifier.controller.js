@@ -10,7 +10,18 @@ const getIdentifierDetail = async (req, res) => identifierService.getIdentifierD
 const exportQrsCsv = async (req, res) => identifierService.exportQrsCsv(req, res);
 const exportQrsZip = async (req, res) => identifierService.exportQrsZip(req, res);
 const exportQrsPdf = async (req, res) => identifierService.exportQrsPdf(req, res);
-const bulkUpdatePrintStatus = async (req, res) => identifierService.bulkUpdatePrintStatus(req, res);
+const recordScan = async (req, res) => {
+  const { identifier_value, result } = req.body || {};
+  const crypto = require('crypto');
+  const ipHash = req.ip ? crypto.createHash('sha256').update(req.ip).digest('hex').slice(0, 16) : null;
+  const outcome = await identifierService.recordScan({
+    identifierValue: identifier_value,
+    result,
+    ipHash,
+    userAgent: req.get('User-Agent') || null,
+  });
+  return res.json({ recorded: outcome.recorded });
+};
 
 module.exports = {
   createIdentifier,
@@ -23,5 +34,5 @@ module.exports = {
   exportQrsCsv,
   exportQrsZip,
   exportQrsPdf,
-  bulkUpdatePrintStatus,
+  recordScan,
 };
