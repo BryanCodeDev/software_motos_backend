@@ -44,7 +44,7 @@ const register = async (req, res) => {
       [userId, '']
     );
   } catch (err) {
-    if (err.code !== 'ER_DUP_ENTRY') throw err;
+    if (err.code !== 'ER_DUP_ENTRY') {throw err;}
   }
 
   const ip = req.ip;

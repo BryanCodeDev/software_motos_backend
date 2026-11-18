@@ -34,9 +34,9 @@ const generateUniqueValue = async (conn) => {
       'SELECT id FROM qr_inventory_packages WHERE value = ? FOR UPDATE',
       [value]
     );
-    if (exists.length === 0) break;
+    if (exists.length === 0) {break;}
   } while (tries < MAX_IDENTIFIER_TRIES);
-  if (tries >= MAX_IDENTIFIER_TRIES) return null;
+  if (tries >= MAX_IDENTIFIER_TRIES) {return null;}
   return value;
 };
 
@@ -50,9 +50,9 @@ const generateUniqueIdentifierValue = async (conn) => {
       'SELECT id FROM identifiers WHERE value = ? FOR UPDATE',
       [value]
     );
-    if (exists.length === 0) break;
+    if (exists.length === 0) {break;}
   } while (tries < MAX_IDENTIFIER_TRIES);
-  if (tries >= MAX_IDENTIFIER_TRIES) return null;
+  if (tries >= MAX_IDENTIFIER_TRIES) {return null;}
   return value;
 };
 
@@ -250,7 +250,7 @@ const getPackageDetail = async (packageId) => {
      WHERE p.id = ?`,
     [packageId]
   );
-  if (rows.length === 0) return null;
+  if (rows.length === 0) {return null;}
   const row = mapPackageRow(rows[0]);
   const logs = await db.query(
     `SELECT id, action, entity_type, entity_id, metadata, ip_address, created_at
@@ -279,7 +279,7 @@ const reservePackageForOrder = async (conn, designId, orderId, userId, ttlMinute
      LIMIT 1 FOR UPDATE SKIP LOCKED`,
     [designId]
   );
-  if (avail.length === 0) return null;
+  if (avail.length === 0) {return null;}
 
   const pkg = avail[0];
   const [upd] = await conn.query(
@@ -288,7 +288,7 @@ const reservePackageForOrder = async (conn, designId, orderId, userId, ttlMinute
      WHERE id = ? AND status = 'available'`,
     [ttlMinutes, orderId, pkg.id]
   );
-  if (upd.affectedRows === 0) return null;
+  if (upd.affectedRows === 0) {return null;}
 
   await conn.query(
     `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address)
@@ -506,13 +506,13 @@ const assignPackageToUserTx = async (conn, userId, orderId, packageId, ipAddress
     'SELECT id, value, status, origin, order_id FROM qr_inventory_packages WHERE id = ? FOR UPDATE',
     [packageId]
   );
-  if (pkgs.length === 0) return { error: 'package_not_found', status: 404 };
+  if (pkgs.length === 0) {return { error: 'package_not_found', status: 404 };}
   const pkg = pkgs[0];
-  if (pkg.origin !== 'inventory') return { error: 'package_not_inventory', status: 400 };
+  if (pkg.origin !== 'inventory') {return { error: 'package_not_inventory', status: 400 };}
   if (!['available', 'reserved', 'assigned'].includes(pkg.status)) {
     return { error: 'package_not_available', status: 409 };
   }
-  if (pkg.order_id && pkg.order_id !== orderId) return { error: 'package_order_mismatch', status: 409 };
+  if (pkg.order_id && pkg.order_id !== orderId) {return { error: 'package_order_mismatch', status: 409 };}
   if (pkg.status === 'assigned') {
     // Ya asignado: devolver el identificador existente (idempotente).
     const [idents] = await conn.query(
@@ -846,9 +846,9 @@ const setPackageStatus = async (packageId, status, actorId, ipAddress = null) =>
     const pkg = pkgs[0];
     const now = new Date();
     const updates = { status, updated_at: now };
-    if (status === 'printed') updates.printed_at = now;
-    if (status === 'dispatched') updates.dispatched_at = now;
-    if (status === 'delivered') updates.delivered_at = now;
+    if (status === 'printed') {updates.printed_at = now;}
+    if (status === 'dispatched') {updates.dispatched_at = now;}
+    if (status === 'delivered') {updates.delivered_at = now;}
 
     const fields = Object.keys(updates).map((k) => `${k} = ?`).join(', ');
     const values = Object.values(updates);

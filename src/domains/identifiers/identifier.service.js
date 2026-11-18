@@ -666,7 +666,7 @@ const exportQrsZip = async (req, res) => {
 
   archive.pipe(res);
 
-  archive.on('error', (err) => {
+  archive.on('error', () => {
     if (!res.headersSent) {
       return res.status(500).json({ error: 'Error generando el ZIP', code: 'zip_error' });
     }
@@ -1099,7 +1099,7 @@ const setQrPrintStatus = async ({ qrId, printStatus, actorId, ipAddress = null }
 
 // Obtiene identificadores por sus IDs (para exportación de producción), con usuario, pedido y diseño.
 const fetchQrsByIds = async (qrIds) => {
-  if (!qrIds || qrIds.length === 0) return [];
+  if (!qrIds || qrIds.length === 0) {return [];}
   const placeholders = qrIds.map(() => '?').join(',');
   return db.query(
     `SELECT i.id, i.user_id, i.value, i.status, i.activation_at, i.print_status, i.created_at, i.order_id,
@@ -1140,7 +1140,7 @@ const exportQrsByIdsZip = async (qrIds, res) => {
 
   archive.pipe(res);
 
-  archive.on('error', (err) => {
+  archive.on('error', () => {
     if (!res.headersSent) {
       return res.status(500).json({ error: 'Error generando el ZIP', code: 'zip_error' });
     }
@@ -1214,7 +1214,6 @@ const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
         const row = rows[index];
         const x = marginPt + c * (cellPt + gapPt);
         const y = marginPt + r * (cellPt + gapPt);
-        const qrUrl = buildPublicUrl(row.value);
         let png;
         try {
           png = await generateQrBuffer(row.value);

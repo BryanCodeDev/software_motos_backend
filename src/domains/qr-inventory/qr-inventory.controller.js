@@ -98,8 +98,8 @@ const exportPackages = async (req, res) => {
     res.set('Content-Disposition', 'attachment; filename="qr-inventario.zip"');
     res.set('Cache-Control', 'private, no-store');
     archive.pipe(res);
-    archive.on('error', (err) => {
-      if (!res.headersSent) return res.status(500).json({ error: 'Error generando el ZIP', code: 'zip_error' });
+    archive.on('error', () => {
+      if (!res.headersSent) {return res.status(500).json({ error: 'Error generando el ZIP', code: 'zip_error' });}
       res.end();
     });
     for (const row of rows) {
@@ -114,7 +114,7 @@ const exportPackages = async (req, res) => {
     const buildCsvRow = (r) => {
       const esc = (v) => {
         const s = String(v === null || v === undefined ? '' : v);
-        if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+        if (/[",\n\r]/.test(s)) {return `"${s.replace(/"/g, '""')}"`;}
         return s;
       };
       return [
@@ -131,7 +131,7 @@ const exportPackages = async (req, res) => {
   // CSV
   const esc = (v) => {
     const s = String(v === null || v === undefined ? '' : v);
-    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    if (/[",\n\r]/.test(s)) {return `"${s.replace(/"/g, '""')}"`;}
     return s;
   };
   const header = ['id_paquete','codigo_paquete','identificador_qr','url_publica','diseno_nombre','diseno_slug','lote','pedido_referencia','estado','origen','cantidad_stickers'];

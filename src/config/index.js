@@ -4,6 +4,7 @@ const schema = require('./env.schema');
 
 const missing = schema.required.filter((key) => !process.env[key]);
 if (missing.length > 0) {
+  // eslint-disable-next-line no-console
   console.warn(
     `[ADVERTENCIA] Faltan variables de entorno requeridas: ${missing.join(
       ', '

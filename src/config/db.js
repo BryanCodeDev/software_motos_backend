@@ -23,11 +23,11 @@ const query = async (sql, params = []) => {
 };
 
 const ignoreDup = (err) => {
-  if (!err) return false;
+  if (!err) {return false;}
   const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
   const dupErnos = [1060, 1061, 1050, 1062, 1067];
   const dupMsgs = ['Duplicate column name', 'Duplicate key name', 'Duplicate entry', 'Table already exists', 'Duplicate index', 'Duplicate foreign key constraint name'];
-  if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) return true;
+  if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) {return true;}
   return dupMsgs.some((m) => String(err.message || '').includes(m));
 };
 
@@ -39,31 +39,31 @@ const ensureIdentifierColumns = async () => {
     await query(
       "ALTER TABLE identifiers MODIFY COLUMN user_id INT UNSIGNED NULL DEFAULT NULL"
     );
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query(
       "ALTER TABLE identifiers ADD COLUMN activation_at TIMESTAMP NULL DEFAULT NULL AFTER status"
     );
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query(
       "ALTER TABLE identifiers ADD COLUMN print_status ENUM('pending_print','sent_to_print','printed','delivered') NOT NULL DEFAULT 'pending_print' AFTER activation_at"
     );
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query("CREATE INDEX idx_identifiers_print_status ON identifiers(print_status)");
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query("CREATE INDEX idx_identifiers_user_print ON identifiers(user_id, print_status)");
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query(
       "ALTER TABLE identifiers ADD COLUMN _one_active_per_user INT UNSIGNED AS (CASE WHEN status IN ('pending_activation','active') THEN user_id END) VIRTUAL AFTER print_status"
     );
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query("CREATE UNIQUE INDEX uq_identifiers_one_active_per_user ON identifiers(_one_active_per_user)");
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
 };
 
 // Garantiza la tabla de diseños de stickers y las columnas de pedido en BDs existentes.
@@ -88,10 +88,10 @@ const ensureDesignAndOrderColumns = async () => {
         CONSTRAINT fk_product_designs_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
 
   const addColumn = async (sql) => {
-    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) throw e; }
+    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) {throw e;} }
   };
 
   await addColumn("ALTER TABLE orders ADD COLUMN design_id INT UNSIGNED NULL DEFAULT NULL AFTER variant_id");
@@ -100,10 +100,10 @@ const ensureDesignAndOrderColumns = async () => {
   await addColumn("ALTER TABLE orders ADD COLUMN sticker_quantity INT UNSIGNED NOT NULL DEFAULT 2 AFTER design_image_url");
   try {
     await query("ALTER TABLE orders ADD CONSTRAINT fk_orders_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL");
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
   try {
     await query("CREATE INDEX idx_orders_design ON orders(design_id)");
-  } catch (e) { if (!ignoreDup(e)) throw e; }
+  } catch (e) { if (!ignoreDup(e)) {throw e;} }
 };
 
 const ensureInventorySchema = async () => {
@@ -175,10 +175,10 @@ const ensureInventorySchema = async () => {
     "ALTER TABLE identifiers ADD CONSTRAINT fk_identifiers_package FOREIGN KEY (package_id) REFERENCES qr_inventory_packages(id) ON DELETE SET NULL",
     "ALTER TABLE qr_inventory_batches ADD COLUMN updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP AFTER created_at",
   ];
-  try { await query(createBatches); } catch (e) { if (!ignoreDup(e)) throw e; }
-  try { await query(createPackages); } catch (e) { if (!ignoreDup(e)) throw e; }
+  try { await query(createBatches); } catch (e) { if (!ignoreDup(e)) {throw e;} }
+  try { await query(createPackages); } catch (e) { if (!ignoreDup(e)) {throw e;} }
   for (const sql of addColumns) {
-    try { await query(sql); } catch (e) { if (!ignoreDup(e)) throw e; }
+    try { await query(sql); } catch (e) { if (!ignoreDup(e)) {throw e;} }
   }
 };
 
@@ -229,9 +229,9 @@ const ensurePrivacySchema = async () => {
   const createIndex = `
     CREATE INDEX idx_data_requests_user_type_status ON data_requests(user_id, request_type, status)
   `;
-  try { await query(createConsentRecords); } catch (e) { if (!ignoreDup(e)) throw e; }
-  try { await query(createDataRequests); } catch (e) { if (!ignoreDup(e)) throw e; }
-  try { await query(createIndex); } catch (e) { if (!ignoreDup(e)) throw e; }
+  try { await query(createConsentRecords); } catch (e) { if (!ignoreDup(e)) {throw e;} }
+  try { await query(createDataRequests); } catch (e) { if (!ignoreDup(e)) {throw e;} }
+  try { await query(createIndex); } catch (e) { if (!ignoreDup(e)) {throw e;} }
 };
 
 const getConnection = async () => getPool().getConnection();

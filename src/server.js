@@ -9,6 +9,7 @@ const start = async () => {
   try {
     await db.ensureIdentifierColumns();
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.warn('[QR] No se pudieron sincronizar columnas de identifiers:', err.message);
   }
 
@@ -16,6 +17,7 @@ const start = async () => {
   try {
     await db.ensureDesignAndOrderColumns();
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.warn('[DISEÑOS] No se pudieron sincronizar diseños/pedidos:', err.message);
   }
 
@@ -24,6 +26,7 @@ const start = async () => {
   try {
     await db.ensurePrivacySchema();
   } catch (err) {
+    // eslint-disable-next-line no-console
     console.warn('[PRIVACIDAD] No se pudieron sincronizar tablas de privacidad:', err.message);
   }
 

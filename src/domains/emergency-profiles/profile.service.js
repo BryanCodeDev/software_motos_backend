@@ -241,7 +241,7 @@ const updatePrivacy = async (req, res) => {
   try {
     const { recordPrivacySettingsChange } = require('../privacy');
     await recordPrivacySettingsChange(req.user.id, req.ip, req.get('User-Agent') || null);
-  } catch (_) {
+  } catch {
     /* No bloquear la respuesta si falla el registro extra de consentimiento */
   }
 

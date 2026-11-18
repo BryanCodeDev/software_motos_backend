@@ -1,7 +1,5 @@
 const db = require('../../config/db');
 
-const { consentRecordSchema } = require('./privacy.schema');
-
 const DEFAULT_TERMS_VERSION = process.env.TERMS_VERSION || '1.0';
 const DEFAULT_PRIVACY_VERSION = process.env.PRIVACY_VERSION || '1.0';
 
