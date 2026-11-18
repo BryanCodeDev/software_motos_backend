@@ -20,7 +20,8 @@ const DESIGNS = [
 
 (async () => {
   try {
-    // Verificar si existe el producto sticker-qr-personalizado
+    // Obtener o crear el producto sticker-qr-personalizado una sola vez
+    let productId;
     const [products] = await db.query(
       "SELECT id FROM products WHERE slug = 'sticker-qr-personalizado' LIMIT 1"
     );
@@ -31,10 +32,10 @@ const DESIGNS = [
         `INSERT INTO products (slug, name, price, currency, is_active, is_purchasable, is_visible, sort_order)
          VALUES ('sticker-qr-personalizado', 'Sticker QR personalizado', 30000, 'COP', 1, 1, 1, 1)`
       );
-      const productId = result.insertId;
+      productId = result.insertId;
       console.log(`Producto creado con id ${productId}`);
     } else {
-      const productId = products[0].id;
+      productId = products[0].id;
       console.log(`Producto sticker-qr-personalizado encontrado con id ${productId}`);
     }
 
@@ -55,14 +56,7 @@ const DESIGNS = [
         await db.query(
           `INSERT INTO product_designs (product_id, name, slug, image_url, is_available, sort_order)
            VALUES (?, ?, ?, ?, ?, ?)`,
-          [
-            (await db.query("SELECT id FROM products WHERE slug = 'sticker-qr-personalizado' LIMIT 1"))[0].id,
-            design.name,
-            design.slug,
-            design.image_url,
-            design.is_available,
-            design.sort_order,
-          ]
+          [productId, design.name, design.slug, design.image_url, design.is_available, design.sort_order]
         );
         console.log(`Diseño creado: ${design.name}`);
       }

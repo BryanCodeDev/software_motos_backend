@@ -26,10 +26,24 @@ function runMigrate(command) {
   return ok;
 }
 
+// Ejecuta el seed automático de diseños de stickers para que estén
+// disponibles en producción sin intervención manual. Es idempotente.
+function runSeedDesigns() {
+  console.log("\n[AUTO-MIGRATE] >>> node migrations/seed-designs.js");
+  const res = spawnSync(process.execPath, ["migrations/seed-designs.js"], {
+    cwd: ROOT,
+    stdio: "inherit",
+    env: process.env,
+  });
+  const ok = res.status === 0;
+  console.log(ok ? "[AUTO-MIGRATE] <<< OK (diseños listos)" : `[AUTO-MIGRATE] <<< AVISO (código ${res.status})`);
+  return ok;
+}
+
 (async () => {
   console.log("==============================================");
   console.log("[AUTO-MIGRATE] INICIANDO MIGRACIONES AUTOMATICAS");
-  console.log("[AUTO-MIGRATE] Modo: solo migraciones (sin seed, sin reset, sin borrado de datos)");
+  console.log("[AUTO-MIGRATE] Modo: esquema + seed automático de diseños (sin reset, sin borrado de datos)");
   console.log("[AUTO-MIGRATE] NODE_ENV=" + process.env.NODE_ENV);
   console.log("[AUTO-MIGRATE] MYSQL_URL=" + (process.env.MYSQL_URL ? "[SET]" : "[NOT SET]"));
   console.log("[AUTO-MIGRATE] DATABASE_URL=" + (process.env.DATABASE_URL ? "[SET]" : "[NOT SET]"));
@@ -42,6 +56,8 @@ function runMigrate(command) {
     console.log(`[AUTO-MIGRATE] Intento ${attempt}/${MAX_ATTEMPTS}...`);
     if (runMigrate("up")) {
       runMigrate("status");
+      // Seed automático de diseños de stickers (idempotente, no borra datos).
+      runSeedDesigns();
       console.log("\n[AUTO-MIGRATE] MIGRACIONES COMPLETADAS. INICIANDO SERVIDOR...\n");
       process.exit(0);
     }
