@@ -13,7 +13,7 @@ const adminExists = async () => {
 };
 
 const listUsers = async (req, res) => {
-  const { q, role, page = '1', limit = '20', print_status } = req.query;
+  const { q, role, page = '1', limit = '20', print_status, without_qr } = req.query;
   const p = Math.max(1, parseInt(page, 10) || 1);
   const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
   const offset = (p - 1) * l;
@@ -32,6 +32,9 @@ const listUsers = async (req, res) => {
     if (usePrintFilter && print_status && ['pending_print', 'sent_to_print', 'printed', 'delivered'].includes(print_status)) {
       where.push('i.print_status = ?');
       params.push(print_status);
+    }
+    if (without_qr === 'true' || without_qr === true) {
+      where.push('i.id IS NULL');
     }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const printCol = usePrintFilter ? 'i.print_status AS qr_print_status,' : '';

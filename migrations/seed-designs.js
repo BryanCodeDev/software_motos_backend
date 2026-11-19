@@ -22,11 +22,11 @@ const DESIGNS = [
   try {
     // Obtener o crear el producto sticker-qr-personalizado una sola vez
     let productId;
-    const [products] = await db.query(
+    const products = await db.query(
       "SELECT id FROM products WHERE slug = 'sticker-qr-personalizado' LIMIT 1"
     );
 
-    if (products.length === 0) {
+    if (!products || products.length === 0) {
       console.log('Creando producto sticker-qr-personalizado...');
       const [result] = await db.query(
         `INSERT INTO products (slug, name, price, currency, is_active, is_purchasable, is_visible, sort_order)

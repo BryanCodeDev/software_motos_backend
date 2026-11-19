@@ -282,52 +282,6 @@ CREATE TABLE IF NOT EXISTS audit_logs (
   CONSTRAINT fk_audit_logs_actor FOREIGN KEY (actor_user_id) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 014: Configuración de alertas (preparación Fase 2)
-CREATE TABLE IF NOT EXISTS alert_configs (
-  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id INT UNSIGNED NOT NULL,
-  enabled TINYINT(1) NOT NULL DEFAULT 0,
-  channels JSON NULL DEFAULT NULL,
-  recipients JSON NULL DEFAULT NULL,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uk_alert_configs_user (user_id),
-  CONSTRAINT fk_alert_configs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 015: Eventos de alerta (preparación Fase 2)
-CREATE TABLE IF NOT EXISTS alert_events (
-  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  user_id INT UNSIGNED NOT NULL,
-  identifier_id INT UNSIGNED NULL DEFAULT NULL,
-  type VARCHAR(50) NOT NULL,
-  channel VARCHAR(30) NOT NULL,
-  status ENUM('created', 'sending', 'sent', 'failed') NOT NULL DEFAULT 'created',
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  KEY idx_alert_events_user (user_id),
-  KEY idx_alert_events_status (status),
-  CONSTRAINT fk_alert_events_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-  CONSTRAINT fk_alert_events_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- 016: Versiones de documentos legales
-CREATE TABLE IF NOT EXISTS legal_document_versions (
-  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
-  document_type ENUM('terms', 'privacy') NOT NULL,
-  version VARCHAR(20) NOT NULL,
-  title VARCHAR(200) NOT NULL,
-  effective_date DATE NOT NULL,
-  content_summary TEXT NULL,
-  is_active TINYINT(1) NOT NULL DEFAULT 1,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  PRIMARY KEY (id),
-  UNIQUE KEY uk_legal_document_versions_type_version (document_type, version),
-  KEY idx_legal_document_versions_active (document_type, is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
 -- 017: Registros de consentimiento del usuario
 CREATE TABLE IF NOT EXISTS consent_records (
   id INT UNSIGNED NOT NULL AUTO_INCREMENT,
