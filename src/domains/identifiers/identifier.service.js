@@ -977,6 +977,17 @@ const archiveQr = async ({ qrId, actorId, reason = null, ipAddress = null, force
       }
     }
 
+    // No archivar un QR vinculado a un usuario, salvo operación administrativa
+    // explícita y auditada (force).
+    if (!force && qr.user_id) {
+      await conn.query('ROLLBACK');
+      return {
+        error: 'qr_linked_to_user',
+        status: 409,
+        detail: `El QR está vinculado al usuario ${qr.user_id}. No se puede archivar un QR asignado.`,
+      };
+    }
+
     await conn.query(
       'UPDATE identifiers SET archived_at = NOW(), archived_by = ? WHERE id = ?',
       [actorId, qrId]
