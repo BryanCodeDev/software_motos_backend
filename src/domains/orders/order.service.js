@@ -489,16 +489,28 @@ const createPackageOrder = async (req, res) => {
     const commercialStatus = totalAmount > 0 ? 'pending_confirmation' : 'paid';
     const paymentStatus = totalAmount > 0 ? 'unpaid' : 'approved';
 
+    // 6. Buscar producto base para el pedido de paquete (requerido por el esquema de orders).
+    const [baseProducts] = await conn.query(
+      'SELECT id FROM products WHERE slug = ? AND is_active = 1 LIMIT 1',
+      [STICKER_PRODUCT_SLUG]
+    );
+    if (!baseProducts.length) {
+      await conn.query('ROLLBACK');
+      return res.status(500).json({ error: 'Producto base no disponible para paquetes', code: 'base_product_not_available' });
+    }
+    const baseProductId = baseProducts[0].id;
+
     // 6. Crear la orden.
     const [result] = await conn.query(
       `INSERT INTO orders (order_number, user_id, product_id, package_id, design_id, design_name,
                            design_image_url, sticker_quantity, profile_count, sticker_total,
                            commercial_status, payment_status, total_amount, currency,
                            shipping_address, customization)
-       VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        VALUES (?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderNumber,
         userId,
+        baseProductId,
         package_id,
         pkg.sticker_count || 0,
         totalProfiles,
