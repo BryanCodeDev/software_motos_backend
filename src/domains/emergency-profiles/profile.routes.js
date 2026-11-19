@@ -19,6 +19,7 @@ const {
 const router = express.Router();
 
 // Mis perfiles (multi-perfil).
+router.get('/me', authenticate, catchAsync(listProfiles));
 router.get('/me/profiles', authenticate, catchAsync(listProfiles));
 router.post('/me/profiles', authenticate, validate(profileCreateSchema), catchAsync(createProfile));
 router.get('/me/profiles/:profileId', authenticate, catchAsync(getProfile));

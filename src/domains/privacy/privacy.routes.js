@@ -7,6 +7,7 @@ const {
   recordConsent,
   getConsentHistory,
   getConsentStatus,
+  getPrivacySettings,
   createDataRequest,
   listMyDataRequests,
   listAllDataRequests,
@@ -14,6 +15,9 @@ const {
 } = require('./privacy.controller');
 
 const router = express.Router();
+
+/* --- Privacidad del usuario autenticado --- */
+router.get('/me', authenticate, catchAsync(getPrivacySettings));
 
 /* --- Consentimientos del usuario autenticado --- */
 router.get('/consents/me', authenticate, catchAsync(getConsentStatus));

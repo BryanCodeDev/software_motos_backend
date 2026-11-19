@@ -1,4 +1,5 @@
 const privacyService = require('./privacy.service');
+const db = require('../../config/db');
 
 const recordConsent = async (req, res) => {
   const { user } = req;
@@ -46,6 +47,32 @@ const getConsentStatus = async (req, res) => {
     sensitive_data: sensitiveData ? { version: sensitiveData.document_version, accepted: sensitiveData.accepted === 1, created_at: sensitiveData.created_at } : null,
     notifications: notifications ? { version: notifications.document_version, accepted: notifications.accepted === 1, created_at: notifications.created_at } : null,
   });
+};
+
+const getPrivacySettings = async (req, res) => {
+  const { user } = req;
+  // Obtener los perfiles del usuario y sus configuraciones de privacidad
+  const profiles = await db.query(
+    'SELECT id, profile_type, display_name FROM emergency_profiles WHERE user_id = ?',
+    [user.id]
+  );
+  const settings = [];
+  for (const profile of profiles) {
+    const rows = await db.query(
+      'SELECT field_name, is_public FROM privacy_settings WHERE profile_id = ?',
+      [profile.id]
+    );
+    for (const r of rows) {
+      settings.push({
+        profile_id: profile.id,
+        profile_type: profile.profile_type,
+        display_name: profile.display_name,
+        field_name: r.field_name,
+        is_public: r.is_public === 1,
+      });
+    }
+  }
+  return res.json({ settings });
 };
 
 const createDataRequest = async (req, res) => {
@@ -99,6 +126,7 @@ module.exports = {
   recordConsent,
   getConsentHistory,
   getConsentStatus,
+  getPrivacySettings,
   createDataRequest,
   listMyDataRequests,
   listAllDataRequests,
