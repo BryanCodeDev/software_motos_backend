@@ -238,7 +238,9 @@ const updateProfileById = async ({ userId, profileId, data, ipAddress }) => {
 
   // Campos comunes a todos los tipos.
   setIf('display_name', data.display_name);
-  setIf('photo_url', data.photo_url === undefined ? null : data.photo_url);
+  if (data.photo_url !== undefined) {
+    setIf('photo_url', data.photo_url);
+  }
   setIf('relationship', data.relationship);
   setIf('is_managed_by_third_party', data.is_managed_by_third_party === undefined ? undefined : (data.is_managed_by_third_party ? 1 : 0));
   if (data.consent_accepted !== undefined) {
