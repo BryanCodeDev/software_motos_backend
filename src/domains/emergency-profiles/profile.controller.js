@@ -41,6 +41,35 @@ const updateProfile = async (req, res) => {
   return res.json({ profile: result.profile, message: 'Perfil actualizado' });
 };
 
+const updateMyProfile = async (req, res) => {
+  const userId = req.user.id;
+  const profiles = await profileService.listProfiles(userId);
+  let profileId;
+  if (profiles.length === 0) {
+    const created = await profileService.createProfile({
+      userId,
+      data: { profile_type: 'person', display_name: '' },
+      ipAddress: req.ip,
+    });
+    if (created.error) {
+      return res.status(created.status).json({ error: created.error, code: created.error });
+    }
+    profileId = created.profile.id;
+  } else {
+    profileId = profiles[0].id;
+  }
+  const result = await profileService.updateProfileById({
+    userId,
+    profileId,
+    data: req.validated.body,
+    ipAddress: req.ip,
+  });
+  if (result.error) {
+    return res.status(result.status).json({ error: result.error, code: result.error });
+  }
+  return res.json({ profile: result.profile, message: 'Perfil actualizado' });
+};
+
 const deactivateProfile = async (req, res) => {
   const { profileId } = req.params;
   const result = await profileService.deactivateProfile({
@@ -77,6 +106,7 @@ module.exports = {
   getProfile,
   createProfile,
   updateProfile,
+  updateMyProfile,
   deactivateProfile,
   reactivateProfile,
   uploadPhoto,

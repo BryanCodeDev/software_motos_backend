@@ -8,6 +8,7 @@ const {
   getProfile,
   createProfile,
   updateProfile,
+  updateMyProfile,
   deactivateProfile,
   reactivateProfile,
   uploadPhoto,
@@ -20,6 +21,7 @@ const router = express.Router();
 
 // Mis perfiles (multi-perfil).
 router.get('/me', authenticate, catchAsync(listProfiles));
+router.patch('/me', authenticate, validate(profileUpdateSchema), catchAsync(updateMyProfile));
 router.get('/me/profiles', authenticate, catchAsync(listProfiles));
 router.post('/me/profiles', authenticate, validate(profileCreateSchema), catchAsync(createProfile));
 router.get('/me/profiles/:profileId', authenticate, catchAsync(getProfile));

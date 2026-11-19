@@ -12,7 +12,7 @@ const orderSchema = z.object({
 
 const stickerOrderSchema = z.object({
   body: z.object({
-    design_id: z.string().uuid(),
+    design_id: z.coerce.number().int().positive(),
   }),
 });
 

@@ -37,12 +37,12 @@ const listUsers = async (req, res) => {
       where.push('i.id IS NULL');
     }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const printCol = usePrintFilter ? 'i.print_status AS qr_print_status,' : '';
+    const printSelect = usePrintFilter ? 'i.print_status AS qr_print_status,' : 'NULL AS qr_print_status,';
     const rows = await db.query(
       `SELECT u.id, u.email, u.role, u.created_at, u.updated_at,
               i.id AS qr_id, i.value AS qr_value, i.status AS qr_status,
               i.activation_at AS qr_activation_at, i.created_at AS qr_created_at,
-              ${printCol} NULL AS qr_print_status
+              ${printSelect}
        FROM users u
        LEFT JOIN identifiers i ON i.user_id = u.id AND i.status IN ('pending_activation', 'active')
        ${whereSql}
