@@ -48,7 +48,8 @@ const listProfiles = async (userId) => {
             pet_vaccines, pet_allergies, pet_medications, pet_conditions,
             pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
             pet_alternate_contacts, pet_care_instructions, pet_lost, pet_reward,
-            consent_version, consent_updated_at, created_at, updated_at
+            consent_version, consent_updated_at, created_at, updated_at,
+            (SELECT COUNT(*) FROM identifiers i WHERE i.profile_id = emergency_profiles.id) AS qr_count
      FROM emergency_profiles
      WHERE user_id = ?
      ORDER BY is_main DESC, created_at ASC`,
