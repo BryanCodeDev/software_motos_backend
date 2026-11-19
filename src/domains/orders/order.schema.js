@@ -1,5 +1,21 @@
 const { z } = require('zod');
 
+const orderSchema = z.object({
+  body: z.object({
+    product_id: z.string().uuid(),
+    design_id: z.string().uuid().optional(),
+    variant_id: z.string().uuid().optional(),
+    shipping_address: z.record(z.any()).optional().nullable(),
+    customization: z.record(z.any()).optional().nullable(),
+  }),
+});
+
+const stickerOrderSchema = z.object({
+  body: z.object({
+    design_id: z.string().uuid(),
+  }),
+});
+
 const packageOrderSchema = z.object({
   body: z.object({
     package_id: z.string().uuid().optional(),
@@ -64,5 +80,7 @@ const packageOrderSchema = z.object({
 });
 
 module.exports = {
+  orderSchema,
+  stickerOrderSchema,
   packageOrderSchema,
 };
