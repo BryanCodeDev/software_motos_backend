@@ -61,7 +61,7 @@ const listUsers = async (req, res) => {
     result = await run(true);
   } catch (err) {
     const isUnknownCol = err && (err.code === 'ER_BAD_FIELD_ERROR' || err.errno === 1054 || /Unknown column/.test(String(err.message || '')));
-    if (!isUnknownCol || !print_status) {throw err;}
+    if (!isUnknownCol) {throw err;}
     // BD sin columna print_status: reintentar sin filtro ni columna de impresión
     result = await run(false);
   }
