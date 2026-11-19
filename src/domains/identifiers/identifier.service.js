@@ -585,6 +585,7 @@ const getIdentifierDetail = async (req, res) => {
     identifier: {
       ...row,
       qr_url: qrUrl,
+      user: row.user_id ? { id: row.user_id, email: row.email, role: row.role, created_at: row.user_created_at } : null,
       order: row.order_id ? {
         order_number: row.order_number,
         design_id: row.design_id,
@@ -593,7 +594,6 @@ const getIdentifierDetail = async (req, res) => {
         sticker_quantity: row.sticker_quantity,
       } : null,
     },
-    user: { id: row.user_id, email: row.email, role: row.role, created_at: row.user_created_at },
     history: logs,
   });
 };
