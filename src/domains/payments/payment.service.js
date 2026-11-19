@@ -101,8 +101,10 @@ const createPreference = async (req, res) => {
       preference_id: pref.id,
       order_id: order.id,
     });
-  } catch {
-    return res.status(502).json({ error: 'No se pudo crear la preferencia de pago' });
+  } catch (error) {
+    // eslint-disable-next-line no-console
+    console.error('[MERCADOPAGO] Error creando preferencia:', error && error.message ? error.message : error);
+    return res.status(502).json({ error: 'No se pudo crear la preferencia de pago', detail: error && error.message ? error.message : String(error) });
   }
 };
 

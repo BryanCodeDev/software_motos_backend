@@ -592,7 +592,7 @@ const PAYMENT_STATUSES = ['unpaid', 'pending', 'approved', 'rejected', 'cancelle
 /* Transiciones comerciales permitidas. Un pedido no puede saltar estados ni
    retroceder salvo cancelación/reembolso explícito. */
 const COMMERCIAL_TRANSITIONS = {
-  draft: ['pending_confirmation', 'pending_payment', 'cancelled'],
+  draft: ['pending_confirmation', 'pending_payment', 'paid', 'cancelled'],
   pending_confirmation: ['pending_payment', 'paid', 'cancelled'],
   pending_payment: ['paid', 'cancelled'],
   paid: ['preparing', 'cancelled', 'refund_requested'],
@@ -795,6 +795,13 @@ const adminUpdateOrderStatus = async (req, res) => {
       }
       next.commercial_status = commercial_status;
       commercialChanged = true;
+
+      // Flujo híbrido: al marcar como pagado desde el admin (pago manual por WhatsApp),
+      // confirmar el pago implícitamente si no viene un payment_status explícito.
+      if (commercial_status === 'paid' && payment_status === undefined && next.payment_status !== 'approved') {
+        next.payment_status = 'approved';
+        paymentChanged = true;
+      }
     }
 
     if (payment_status !== undefined && payment_status !== order.payment_status) {
@@ -826,11 +833,6 @@ const adminUpdateOrderStatus = async (req, res) => {
     if (paymentChanged) {
       updates.push('payment_status = ?');
       values.push(next.payment_status);
-    }
-    if (commercial_status === 'paid' && payment_status === undefined && order.payment_status !== 'approved') {
-      // No se permite marcar pagado sin confirmación de pago válida.
-      await conn.query('ROLLBACK');
-      return res.status(400).json({ error: 'No se puede marcar como pagado sin una confirmación de pago válida' });
     }
     if (updates.length) {
       values.push(id);
