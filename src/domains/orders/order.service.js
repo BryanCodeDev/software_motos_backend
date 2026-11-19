@@ -5,7 +5,6 @@ const { activateQr } = require('../identifiers/identifier.service');
 
 const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
 const STICKER_PACK_QUANTITY = 2;
-const STICKER_FIXED_PRICE = 30000;
 const STICKER_CURRENCY = 'COP';
 
 const generateOrderNumber = () => {
@@ -232,11 +231,11 @@ const createOrder = async (req, res) => {
   }
 };
 
-/* ───────── Compra simplificada de stickers ─────────
-   Precio fijo $30.000 COP, un solo diseño, sin dirección de envío requerida.
-   El diseño se asocia al pedido (no al identificador QR).
-   Los datos de diseño vienen del frontend; el servidor solo aplica el precio fijo.
-  ────────────────────────────────────────────────── */
+/* ───────── Compra de stickers (precio desde el catálogo) ─────────
+   Dos stickers del mismo diseño por perfil. El precio se obtiene del producto
+   en la base de datos (única fuente de verdad); el frontend no lo envía ni lo
+   modifica. El diseño se asocia al pedido (no al identificador QR).
+   ────────────────────────────────────────────────── */
 const createStickerOrder = async (req, res) => {
   const { design_id } = req.validated.body;
   const userId = req.user.id;
@@ -245,9 +244,20 @@ const createStickerOrder = async (req, res) => {
   try {
     await conn.query('START TRANSACTION');
 
+    // Precio obtenido del catálogo (única fuente de verdad).
+    const [products] = await conn.query(
+      'SELECT id, name, price, currency FROM products WHERE slug = ? AND is_active = 1 AND is_purchasable = 1 LIMIT 1',
+      [STICKER_PRODUCT_SLUG]
+    );
+    if (products.length === 0) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Producto de stickers no disponible', code: 'sticker_product_not_available' });
+    }
+    const product = products[0];
+
     // Precio fijo del servidor; el frontend no lo envía ni lo modifica
-    const totalAmount = STICKER_FIXED_PRICE;
-    const currency = STICKER_CURRENCY;
+    const totalAmount = parseFloat(product.price);
+    const currency = product.currency || STICKER_CURRENCY;
     const orderNumber = generateOrderNumber();
 
     const commercialStatus = 'pending_confirmation';
@@ -256,10 +266,11 @@ const createStickerOrder = async (req, res) => {
     const [result] = await conn.query(
       `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
                            sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
-       VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?)`,
+       VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?)`,
       [
         orderNumber,
         userId,
+        product.id,
         design_id,
         STICKER_PACK_QUANTITY,
         commercialStatus,
@@ -273,8 +284,8 @@ const createStickerOrder = async (req, res) => {
     // Ítem del pedido: 2 stickers del mismo diseño, precio unitario = total / 2
     const itemUnitPrice = parseFloat((totalAmount / STICKER_PACK_QUANTITY).toFixed(2));
     await conn.query(
-      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, NULL, ?, ?, ?)',
-      [result.insertId, 'Sticker QR personalizado', itemUnitPrice, STICKER_PACK_QUANTITY]
+      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, ?, ?, ?, ?)',
+      [result.insertId, product.id, product.name, itemUnitPrice, STICKER_PACK_QUANTITY]
     );
 
     // Evento de pago inicial

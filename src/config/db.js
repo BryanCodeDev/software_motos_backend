@@ -528,9 +528,240 @@ const ensureMultiProfileSchema = async () => {
   } catch {
     // No bloquear el arranque si el backfill falla en alguna BD.
   }
+
+  // 12. Catálogo de lanzamiento: paquetes y precios definitivos.
+  //     Idempotente: usa ON DUPLICATE KEY UPDATE, por lo que es seguro ejecutar
+  //     en cada arranque y actualiza precios/composición sin borrar pedidos.
+  try {
+    await ensureLaunchPackages();
+  } catch {
+    // No bloquear el arranque si la carga del catálogo falla.
+  }
 };
 
 const getConnection = async () => getPool().getConnection();
+
+/*
+ * Catálogo de lanzamiento: paquetes y precios definitivos.
+ * Idempotente: actualiza precios y composición sin tocar pedidos históricos.
+ * Se ejecuta en cada arranque (dentro de ensureMultiProfileSchema).
+ */
+const ensureLaunchPackages = async () => {
+  const packages = [
+    {
+      slug: 'perfil-individual',
+      name: 'Perfil individual',
+      description: '1 perfil de persona, 1 QR permanente y 2 stickers físicos con ese mismo QR.',
+      line: 'person',
+      profile_count: 1,
+      sticker_count: 2,
+      price: 39900,
+      currency: 'COP',
+      sort_order: 1,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'person', quantity_profiles: 1, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'familiar-x3',
+      name: 'Familiar x3',
+      description: '3 perfiles de personas, 3 QR independientes y 6 stickers. Ideal para familias.',
+      line: 'person',
+      profile_count: 3,
+      sticker_count: 6,
+      price: 99900,
+      currency: 'COP',
+      sort_order: 2,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'person', quantity_profiles: 3, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'familiar-x4',
+      name: 'Familiar x4',
+      description: '4 perfiles de personas, 4 QR independientes y 8 stickers.',
+      line: 'person',
+      profile_count: 4,
+      sticker_count: 8,
+      price: 124900,
+      currency: 'COP',
+      sort_order: 3,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'person', quantity_profiles: 4, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'familiar-x5',
+      name: 'Familiar x5',
+      description: '5 perfiles de personas, 5 QR independientes y 10 stickers.',
+      line: 'person',
+      profile_count: 5,
+      sticker_count: 10,
+      price: 149900,
+      currency: 'COP',
+      sort_order: 4,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'person', quantity_profiles: 5, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'mascota-individual',
+      name: 'Mascota individual',
+      description: '1 perfil de mascota, 1 QR permanente y 2 stickers físicos.',
+      line: 'pet',
+      profile_count: 1,
+      sticker_count: 2,
+      price: 34900,
+      currency: 'COP',
+      sort_order: 5,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'pet', quantity_profiles: 1, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'pack-mascotas-x2',
+      name: 'Pack mascotas x2',
+      description: '2 perfiles de mascotas, 2 QR independientes y 4 stickers.',
+      line: 'pet',
+      profile_count: 2,
+      sticker_count: 4,
+      price: 64900,
+      currency: 'COP',
+      sort_order: 6,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'pet', quantity_profiles: 2, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'pack-mascotas-x3',
+      name: 'Pack mascotas x3',
+      description: '3 perfiles de mascotas, 3 QR independientes y 6 stickers.',
+      line: 'pet',
+      profile_count: 3,
+      sticker_count: 6,
+      price: 89900,
+      currency: 'COP',
+      sort_order: 7,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [{ profile_type: 'pet', quantity_profiles: 3, stickers_per_profile: 2 }],
+    },
+    {
+      slug: 'combo-familia-mascota',
+      name: 'Familia + mascota',
+      description: '3 personas + 1 mascota, 4 QR independientes y 8 stickers.',
+      line: 'combo',
+      profile_count: 4,
+      sticker_count: 8,
+      price: 119900,
+      currency: 'COP',
+      sort_order: 8,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [
+        { profile_type: 'person', quantity_profiles: 3, stickers_per_profile: 2 },
+        { profile_type: 'pet', quantity_profiles: 1, stickers_per_profile: 2 },
+      ],
+    },
+    {
+      slug: 'combo-familia-2-mascotas',
+      name: 'Familia + 2 mascotas',
+      description: '3 personas + 2 mascotas, 5 QR independientes y 10 stickers.',
+      line: 'combo',
+      profile_count: 5,
+      sticker_count: 10,
+      price: 139900,
+      currency: 'COP',
+      sort_order: 9,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [
+        { profile_type: 'person', quantity_profiles: 3, stickers_per_profile: 2 },
+        { profile_type: 'pet', quantity_profiles: 2, stickers_per_profile: 2 },
+      ],
+    },
+    {
+      slug: 'combo-familia-completa',
+      name: 'Familia completa',
+      description: '4 personas + 2 mascotas, 6 QR independientes y 12 stickers.',
+      line: 'combo',
+      profile_count: 6,
+      sticker_count: 12,
+      price: 164900,
+      currency: 'COP',
+      sort_order: 10,
+      is_active: 1,
+      is_visible: 1,
+      profiles: [
+        { profile_type: 'person', quantity_profiles: 4, stickers_per_profile: 2 },
+        { profile_type: 'pet', quantity_profiles: 2, stickers_per_profile: 2 },
+      ],
+    },
+  ];
+
+  const conn = await getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    for (const pkg of packages) {
+      // Upsert del paquete por slug (única fuente de verdad del precio).
+      await conn.query(
+        `INSERT INTO product_packages
+          (name, slug, description, line, profile_count, sticker_count, price, currency,
+           is_active, is_visible, sort_order, valid_from)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+          name = VALUES(name),
+          description = VALUES(description),
+          line = VALUES(line),
+          profile_count = VALUES(profile_count),
+          sticker_count = VALUES(sticker_count),
+          price = VALUES(price),
+          currency = VALUES(currency),
+          is_active = VALUES(is_active),
+          is_visible = VALUES(is_visible),
+          sort_order = VALUES(sort_order),
+          updated_at = NOW()`,
+        [
+          pkg.name, pkg.slug, pkg.description, pkg.line, pkg.profile_count, pkg.sticker_count,
+          pkg.price, pkg.currency, pkg.is_active, pkg.is_visible, pkg.sort_order,
+        ]
+      );
+
+      const [pkgRows] = await conn.query('SELECT id FROM product_packages WHERE slug = ?', [pkg.slug]);
+      const packageId = pkgRows[0].id;
+
+      // Sincronizar composición del paquete (borrar y reinsertar, pequeño conjunto).
+      await conn.query('DELETE FROM package_profiles WHERE package_id = ?', [packageId]);
+      for (const pp of pkg.profiles) {
+        await conn.query(
+          `INSERT INTO package_profiles (package_id, profile_type, quantity_profiles, stickers_per_profile)
+           VALUES (?, ?, ?, ?)`,
+          [packageId, pp.profile_type, pp.quantity_profiles, pp.stickers_per_profile]
+        );
+      }
+    }
+
+    // Producto individual: sticker adicional (se compra para un perfil existente).
+    await conn.query(
+      `INSERT INTO products
+        (name, slug, description, price, currency, is_active, is_purchasable, is_visible, variant_options, sort_order)
+       VALUES (?, ?, ?, ?, ?, 1, 1, 1, NULL, 99)
+       ON DUPLICATE KEY UPDATE price = VALUES(price), currency = VALUES(currency),
+         is_active = VALUES(is_active), is_purchasable = VALUES(is_purchasable)`,
+      ['Sticker adicional', 'sticker-adicional',
+       'Sticker físico extra para un perfil que ya tienes. Reutiliza su QR permanente y no genera otro identificador.',
+       9900, 'COP']
+    );
+
+    await conn.query('COMMIT');
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
 
 const close = async () => {
   if (pool) {
