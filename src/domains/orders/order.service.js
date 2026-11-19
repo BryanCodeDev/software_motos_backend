@@ -234,7 +234,7 @@ const createOrder = async (req, res) => {
    modifica. El diseño se asocia al pedido (no al identificador QR).
    ────────────────────────────────────────────────── */
 const createStickerOrder = async (req, res) => {
-  const { design_id } = req.validated.body;
+  const { design_id, shipping_address } = req.validated.body;
   const userId = req.user.id;
 
   const conn = await db.getConnection();
@@ -252,6 +252,12 @@ const createStickerOrder = async (req, res) => {
     }
     const product = products[0];
 
+    // Dirección de envío requerida para stickers físicos.
+    if (!shipping_address || Object.keys(shipping_address).length === 0) {
+      await conn.query('ROLLBACK');
+      return res.status(400).json({ error: 'La dirección de envío es requerida para los stickers.', code: 'shipping_required' });
+    }
+
     // Precio fijo del servidor; el frontend no lo envía ni lo modifica
     const totalAmount = parseFloat(product.price);
     const currency = product.currency || STICKER_CURRENCY;
@@ -263,7 +269,7 @@ const createStickerOrder = async (req, res) => {
     const [result] = await conn.query(
       `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
                            sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
-       VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?)`,
+       VALUES (?, ?, ?, ?, NULL, NULL, ?, ?, ?, ?, ?, ?, ?)`,
       [
         orderNumber,
         userId,
@@ -274,6 +280,7 @@ const createStickerOrder = async (req, res) => {
         paymentStatus,
         totalAmount,
         currency,
+        JSON.stringify(shipping_address),
         JSON.stringify({ tipo: 'compra_stickers_simplificada', diseño_seleccionado: design_id }),
       ]
     );
@@ -337,6 +344,7 @@ const createStickerOrder = async (req, res) => {
         payment_status: paymentStatus,
         total_amount: totalAmount,
         currency,
+        shipping_address,
       },
     });
   } catch (error) {

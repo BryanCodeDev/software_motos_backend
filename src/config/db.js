@@ -568,7 +568,7 @@ const ensureLaunchPackages = async () => {
       line: 'person',
       profile_count: 1,
       sticker_count: 2,
-      price: 39900,
+      price: 29000,
       currency: 'COP',
       sort_order: 1,
       is_active: 1,

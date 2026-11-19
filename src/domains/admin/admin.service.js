@@ -37,7 +37,7 @@ const listUsers = async (req, res) => {
       where.push('i.id IS NULL');
     }
     const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
-    const printSelect = usePrintFilter ? 'i.print_status AS qr_print_status,' : 'NULL AS qr_print_status,';
+    const printSelect = usePrintFilter ? 'i.print_status AS qr_print_status' : 'NULL AS qr_print_status';
     const rows = await db.query(
       `SELECT u.id, u.email, u.role, u.created_at, u.updated_at,
               i.id AS qr_id, i.value AS qr_value, i.status AS qr_status,

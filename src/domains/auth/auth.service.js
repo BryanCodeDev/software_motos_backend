@@ -7,6 +7,7 @@ const {
 } = require('../../utils/jwt');
 const { createRecoveryToken } = require('../../utils/recovery-tokens');
 const config = require('../../config');
+const nodeCrypto = require('crypto');
 
 const clearAuthTokens = () => {
   // No-op en backend: el frontend limpia localStorage en logout
@@ -42,9 +43,25 @@ const register = async (req, res) => {
       throw Object.assign(new Error('consent_required'), { code: 'consent_required', status: 400 });
     }
     await db.query(
-      'INSERT INTO emergency_profiles (user_id, profile_type, relationship, display_name, is_active) VALUES (?, ?, ?, ?, 0)',
+      'INSERT INTO emergency_profiles (user_id, profile_type, relationship, display_name, is_active) VALUES (?, ?, ?, ?, 1)',
       [userId, profile_type, relationship, display_name || name]
     );
+
+    /* Crear y activar el QR de emergencia por defecto al registrar la cuenta. */
+    try {
+      const identifierValue = `emg_${nodeCrypto.randomBytes(12).toString('hex')}`;
+      const frontendBase = (config.frontendUrl || config.appUrl || 'http://localhost:5173').replace(/\/+$/, '');
+      await db.query(
+        'INSERT INTO identifiers (user_id, profile_id, value, status, activation_at) SELECT ?, id, ?, ?, NOW() FROM emergency_profiles WHERE user_id = ? AND is_active = 1 LIMIT 1',
+        [userId, identifierValue, 'active', userId]
+      );
+      await db.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [userId, 'identifier.create.auto_active', 'identifiers', String(userId), JSON.stringify({ value: identifierValue, qr_url: `${frontendBase}/e/${identifierValue}` }), req.ip]
+      );
+    } catch {
+      // No bloquear el registro si la creación del QR falla.
+    }
   } catch (err) {
     throw err;
   }

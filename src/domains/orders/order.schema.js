@@ -13,6 +13,7 @@ const orderSchema = z.object({
 const stickerOrderSchema = z.object({
   body: z.object({
     design_id: z.coerce.number().int().positive(),
+    shipping_address: z.record(z.any()).optional().nullable(),
   }),
 });
 

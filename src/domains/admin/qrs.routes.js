@@ -23,14 +23,14 @@ const qrIdSchema = z.object({
 
 const linkSchema = z.object({
   body: z.object({
-    qr_id: z.string().regex(/^\d+$/, 'ID de QR inválido'),
-    user_id: z.string().regex(/^\d+$/, 'ID de usuario inválido'),
+    qr_id: z.union([z.string().regex(/^\d+$/, 'ID de QR inválido'), z.number().int().positive('ID de QR inválido')]),
+    user_id: z.union([z.string().regex(/^\d+$/, 'ID de usuario inválido'), z.number().int().positive('ID de usuario inválido')]),
   }),
 });
 
 const unlinkSchema = z.object({
   body: z.object({
-    qr_id: z.string().regex(/^\d+$/, 'ID de QR inválido'),
+    qr_id: z.union([z.string().regex(/^\d+$/, 'ID de QR inválido'), z.number().int().positive('ID de QR inválido')]),
   }),
 });
 

@@ -55,7 +55,7 @@ const createPaidOrderWithQr = async () => {
   await dbq(
     `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
        sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', 'approved', 30000, 'COP', ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'paid', 'approved', 29000, 'COP', ?)`,
     ['EID-ORD-' + ts, user.id, productId, designId, 'Diseño 1', '/img/s1.png', 2,
      JSON.stringify({ fullName: 'Juan Pérez', phone: '3001234567', address: 'Calle 10 # 20-30', city: 'Bogotá', department: 'Cundinamarca', notes: 'Entrega en recepción' })]
   );
@@ -161,7 +161,7 @@ test('no permite marcar pagado sin confirmación de pago', { concurrent: false }
   await dbq(
     `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
        sticker_quantity, commercial_status, payment_status, total_amount, currency)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending', 30000, 'COP')`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_payment', 'pending', 29000, 'COP')`,
     ['EID-NP-' + ts, user.id, productId, designId, 'Diseño', '/img/s.png', 1]
   );
   const order = await dbone('SELECT id FROM orders WHERE order_number = ?', ['EID-NP-' + ts]);

@@ -15,10 +15,10 @@ START TRANSACTION;
 INSERT IGNORE INTO products
   (name, slug, description, price, currency, is_active, is_purchasable, is_visible, variant_options, sort_order)
 VALUES
--- Perfil individual (1 persona, 1 QR, 2 stickers) - $39.900
+-- Perfil individual (1 persona, 1 QR, 2 stickers) - $29.000
 ('Perfil individual', 'sticker-qr-personalizado',
  'Perfil de emergencia digital con código QR permanente. Incluye 1 perfil, 1 QR independiente y 2 stickers físicos con ese mismo QR. Pago único, sin suscripción.',
- 39900, 'COP', 1, 1, 1, NULL, 1),
+ 29000, 'COP', 1, 1, 1, NULL, 1),
 
 -- Sticker adicional (para perfil existente, reutiliza su QR) - $9.900
 ('Sticker adicional', 'sticker-adicional',
@@ -118,7 +118,7 @@ VALUES
 -- Línea: Personas
 ('Perfil individual', 'perfil-individual',
  '1 perfil de persona, 1 QR permanente y 2 stickers físicos con ese mismo QR.',
- 'person', 1, 2, 39900, 'COP', 1, 1, 1, NOW()),
+ 'person', 1, 2, 29000, 'COP', 1, 1, 1, NOW()),
 
 ('Familiar x3', 'familiar-x3',
  '3 perfiles de personas, 3 QR independientes y 6 stickers. Ideal para familias.',

@@ -35,7 +35,7 @@ const ensureProfile = async (userId) => {
   if (rows.length === 0) {
     try {
       const result = await db.query(
-        'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+        'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 1)',
         [userId, '']
       );
       return { id: result.insertId };
@@ -59,7 +59,7 @@ const ensureProfileTx = async (conn, userId) => {
   );
   if (rows.length === 0) {
     const [result] = await conn.query(
-      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 1)',
       [userId, '']
     );
     return { id: result.insertId };
@@ -1135,11 +1135,57 @@ const linkQrToUser = async ({ qrId, userId, actorId, ipAddress = null }) => {
       return { error: 'user_already_has_qr', status: 409 };
     }
 
-    await conn.query(
-      'UPDATE identifiers SET user_id = ?, status = COALESCE(NULLIF(status, ?), ?) WHERE id = ?',
-      [userId, 'pending_activation', 'pending_activation', qrId]
+    /* ───── Crear pedido automático al asignar QR desde admin ───── */
+    const [products] = await conn.query(
+      'SELECT id, name, price, currency FROM products WHERE slug = ? AND is_active = 1 LIMIT 1',
+      ['sticker-qr-personalizado']
     );
-    // Activar solo el perfil de emergencia principal del usuario.
+    let orderId = null;
+    let orderNumber = null;
+    if (products.length > 0) {
+      const product = products[0];
+      const generateOrderNumber = () => {
+        const date = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+        const random = crypto.randomBytes(3).toString('hex').toUpperCase();
+        return `EID-${date}-${random}`;
+      };
+      orderNumber = generateOrderNumber();
+
+      const [orderResult] = await conn.query(
+        `INSERT INTO orders
+          (order_number, user_id, product_id, design_id, design_name, sticker_quantity,
+           commercial_status, payment_status, total_amount, currency, inventory_origin)
+        VALUES (?, ?, ?, NULL, NULL, 2, 'paid', 'approved', 0.00, 'COP', 'on_demand')`,
+        [orderNumber, userId, product.id]
+      );
+      orderId = orderResult.insertId;
+
+      await conn.query(
+        `INSERT INTO order_items (order_id, product_id, name, price, quantity)
+         VALUES (?, ?, ?, ?, 1)`,
+        [orderId, product.id, product.name, product.price || 0]
+      );
+
+      await conn.query(
+        `INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          actorId,
+          'order.create_admin_qr_link',
+          'orders',
+          String(orderId),
+          JSON.stringify({ order_number: orderNumber, user_id: userId, product_id: product.id, source: 'qr_link' }),
+          ipAddress,
+        ]
+      );
+    }
+
+    /* ───── Vincular QR al usuario y activarlo (pending_activation → active) ───── */
+    await conn.query(
+      'UPDATE identifiers SET user_id = ?, status = ?, activation_at = COALESCE(activation_at, NOW()), order_id = ? WHERE id = ?',
+      [userId, 'active', orderId, qrId]
+    );
+
+    /* Activar solo el perfil de emergencia principal del usuario. */
     const [mainProfileRows] = await conn.query(
       'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
       [userId]
@@ -1154,13 +1200,21 @@ const linkQrToUser = async ({ qrId, userId, actorId, ipAddress = null }) => {
         'qr.link_to_user',
         'identifiers',
         String(qrId),
-        JSON.stringify({ value: qr.value, user_id: userId, previous_user_id: qr.user_id }),
+        JSON.stringify({ value: qr.value, user_id: userId, previous_user_id: qr.user_id, order_id: orderId, order_number: orderNumber }),
         ipAddress,
       ]
     );
 
     await conn.query('COMMIT');
-    return { qr_id: qrId, value: qr.value, user_id: userId, status: 'pending_activation' };
+    return {
+      qr_id: qrId,
+      value: qr.value,
+      user_id: userId,
+      status: 'active',
+      order_id: orderId,
+      order_number: orderNumber,
+      activated: true,
+    };
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
     throw error;

@@ -100,7 +100,7 @@ test('activación vía pedido pagado (no-sticker) reutiliza QR existente', { con
   // Pedido pagado (qr-digital-basico) aprobado como admin → activateQr
   const product = await dbone("SELECT id FROM products WHERE slug = 'qr-digital-basico' LIMIT 1");
   const orderNum = `EID-PAGO-${Date.now()}`;
-  await dbq(`INSERT INTO orders (order_number, user_id, product_id, commercial_status, payment_status, total_amount, currency) VALUES (?, ?, ?, 'paid', 'approved', 30000, 'COP')`, [orderNum, user.id, product.id]);
+  await dbq(`INSERT INTO orders (order_number, user_id, product_id, commercial_status, payment_status, total_amount, currency) VALUES (?, ?, ?, 'paid', 'approved', 29000, 'COP')`, [orderNum, user.id, product.id]);
   const order = await dbone('SELECT id FROM orders WHERE order_number = ?', [orderNum]);
 
   const admin = await login('admin@example.com', 'Admin1012@');

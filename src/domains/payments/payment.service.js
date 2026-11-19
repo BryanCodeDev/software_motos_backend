@@ -31,9 +31,26 @@ const createPreference = async (req, res) => {
     return res.status(409).json({ error: 'Este pedido no requiere pago' });
   }
   if (!config.mercadopago.accessToken) {
-    return res.status(503).json({
-      error: 'Integración de pagos no configurada',
-      code: 'payment_not_configured',
+    /* Mercado Pago no configurado: registrar el pago como pendiente y devolver
+       instrucciones de pago manual en lugar de fallar con 503. */
+    await db.query(
+      'UPDATE orders SET payment_status = ?, commercial_status = ? WHERE id = ?',
+      ['pending', 'pending_confirmation', order.id]
+    );
+    await db.query(
+      'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
+      [order.id, 'preference_created', 'pending', order.total_amount, JSON.stringify({ reason: 'payment_not_configured', manual: true })]
+    );
+    await db.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [req.user.id, 'payment.pending_manual', 'orders', String(order.id), JSON.stringify({ amount: order.total_amount, reason: 'payment_not_configured' }), null]
+    );
+    return res.json({
+      init_point: null,
+      preference_id: null,
+      order_id: order.id,
+      payment_method: 'manual',
+      message: 'Pago registrado como pendiente. Se procesará de forma manual (transferencia/bancaria). Te notificaremos al activarse tu QR.',
     });
   }
 
