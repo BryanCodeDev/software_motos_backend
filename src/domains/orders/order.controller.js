@@ -4,11 +4,13 @@ const listOrders = async (req, res) => orderService.listOrders(req, res);
 const getOrder = async (req, res) => orderService.getOrder(req, res);
 const createOrder = async (req, res) => orderService.createOrder(req, res);
 const createStickerOrder = async (req, res) => orderService.createStickerOrder(req, res);
+const createPackageOrder = async (req, res) => orderService.createPackageOrder(req, res);
 
 module.exports = {
   listOrders,
   getOrder,
   createOrder,
   createStickerOrder,
+  createPackageOrder,
 };
 

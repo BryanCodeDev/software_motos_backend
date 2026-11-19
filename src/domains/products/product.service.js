@@ -84,6 +84,13 @@ const createProduct = async (req, res) => {
 const updateProduct = async (req, res) => {
   const { id } = req.params;
   const data = req.validated.body;
+
+  const existing = await db.query('SELECT * FROM products WHERE id = ?', [id]);
+  if (!existing.length) {
+    return res.status(404).json({ error: 'Producto no encontrado' });
+  }
+  const oldProduct = existing[0];
+
   const fields = [];
   const values = [];
   const setIf = (key, val) => {
@@ -94,6 +101,7 @@ const updateProduct = async (req, res) => {
   };
   setIf('name', data.name);
   setIf('description', data.description === undefined ? null : data.description);
+  setIf('slug', data.slug);
   setIf('price', data.price);
   setIf('currency', data.currency);
   setIf('is_active', data.is_active === undefined ? undefined : data.is_active ? 1 : 0);
@@ -106,6 +114,20 @@ const updateProduct = async (req, res) => {
   }
   values.push(id);
   await db.query(`UPDATE products SET ${fields.join(', ')} WHERE id = ?`, values);
+
+  // Historial de precio si cambió.
+  if (data.price !== undefined && parseFloat(data.price) !== parseFloat(oldProduct.price)) {
+    await db.query(
+      `INSERT INTO price_history (product_id, old_price, new_price, currency, changed_by, changed_at, reason)
+       VALUES (?, ?, ?, ?, ?, NOW(), 'actualizacion_precio_producto')`,
+      [id, oldProduct.price, data.price, data.currency || oldProduct.currency, req.user.id]
+    );
+  }
+
+  await db.query(
+    'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+    [req.user.id, 'product.update', 'products', String(id), JSON.stringify({ fields: fields.map(f => f.split(' = ')[0]) }), req.ip]
+  );
   return res.json({ message: 'Producto actualizado' });
 };
 

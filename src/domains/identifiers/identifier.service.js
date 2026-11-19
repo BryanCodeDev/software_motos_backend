@@ -304,6 +304,118 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
 };
 
 // ---------------------------------------------------------------------------
+// Activación del QR por perfil (idempotente: reutiliza el existente).
+// Cada perfil tiene su propio QR permanente; nunca se crea uno nuevo si ya
+// existe uno vinculado al perfil. Bloquea por profile_id para evitar carreras
+// entre webhooks y solicitudes simultáneas.
+// ---------------------------------------------------------------------------
+const activateQrForProfile = async (profileId, orderId, ipAddress = null) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    // Bloquea los identificadores vinculados a este perfil.
+    const [profileRows] = await conn.query(
+      'SELECT id, value, status, activation_at, order_id, user_id FROM identifiers WHERE profile_id = ? FOR UPDATE',
+      [profileId]
+    );
+
+    // Reutiliza el vigente del perfil (active o pending_activation).
+    const existing = profileRows.find((r) => r.status === 'active' || r.status === 'pending_activation');
+
+    let identifier;
+    if (existing) {
+      await conn.query(
+        'UPDATE identifiers SET status = ?, activation_at = COALESCE(activation_at, NOW()), order_id = COALESCE(order_id, ?) WHERE id = ?',
+        ['active', orderId, existing.id]
+      );
+      await conn.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          existing.user_id,
+          'identifier.activate.profile',
+          'identifiers',
+          String(existing.id),
+          JSON.stringify({ profile_id: profileId, value: existing.value, order_id: orderId, previous_status: existing.status }),
+          ipAddress,
+        ]
+      );
+      identifier = {
+        id: existing.id,
+        value: existing.value,
+        status: 'active',
+        activation_at: existing.activation_at || new Date(),
+      };
+    } else {
+      // Crear un nuevo identificador vinculado a este perfil.
+      const [profile] = await conn.query(
+        'SELECT id, user_id FROM emergency_profiles WHERE id = ?',
+        [profileId]
+      );
+      if (!profile.length) {
+        await conn.query('ROLLBACK');
+        return { error: 'profile_not_found', status: 404 };
+      }
+      const ownerUserId = profile[0].user_id;
+
+      let value;
+      let tries = 0;
+      do {
+        value = generateIdentifierValue();
+        tries += 1;
+        const [exists] = await conn.query(
+          'SELECT id FROM identifiers WHERE value = ? FOR UPDATE',
+          [value]
+        );
+        if (exists.length === 0) { break; }
+      } while (tries < MAX_IDENTIFIER_TRIES);
+
+      if (tries >= MAX_IDENTIFIER_TRIES) {
+        await conn.query('ROLLBACK');
+        return { error: 'identifier_generation_failed', status: 500 };
+      }
+
+      const [result] = await conn.query(
+        'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, activation_at) VALUES (?, ?, ?, ?, ?, NOW())',
+        [ownerUserId, profileId, orderId, value, 'active']
+      );
+
+      await conn.query(
+        'UPDATE emergency_profiles SET is_active = 1 WHERE id = ?',
+        [profileId]
+      );
+
+      await conn.query(
+        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+        [
+          ownerUserId,
+          'identifier.create.profile',
+          'identifiers',
+          String(result.insertId),
+          JSON.stringify({ profile_id: profileId, value, order_id: orderId }),
+          ipAddress,
+        ]
+      );
+
+      identifier = {
+        id: result.insertId,
+        value,
+        status: 'active',
+        activation_at: new Date(),
+      };
+    }
+
+    await conn.query('COMMIT');
+    return { identifier, qr_url: buildPublicUrl(identifier.value) };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Endpoints existentes del usuario (adaptados a nuevos estados).
 // ---------------------------------------------------------------------------
 const createIdentifier = async (req, res) => {
@@ -1507,6 +1619,7 @@ module.exports = {
   bulkUpdatePrintStatus,
   ensureOrCreatePendingQr,
   activateQr,
+  activateQrForProfile,
   ensureProfileTx,
   listQrsAdmin,
   qrStats,

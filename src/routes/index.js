@@ -23,6 +23,7 @@ apiRouter.use('/orders', require('../domains/orders/order.routes'));
 apiRouter.use('/', require('../domains/emergency-profiles/profile.routes')); // privacy/me + public
 apiRouter.use('/products', require('../domains/products/product.routes'));
 apiRouter.use('/designs', require('../domains/designs/design.routes'));
+apiRouter.use('/packages', require('../domains/product-packages/package.routes'));
 apiRouter.use('/', require('../domains/payments/payment.routes'));
 apiRouter.use('/payments', require('../domains/payments/payment.routes'));
 apiRouter.use('/admin', require('../domains/admin/admin.routes'));

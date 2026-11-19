@@ -2,7 +2,7 @@ const db = require('../../config/db');
 const mercadopago = require('mercadopago');
 const crypto = require('crypto');
 const config = require('../../config');
-const { activateQr } = require('../identifiers/identifier.service');
+const { activateQr, activateQrForProfile } = require('../identifiers/identifier.service');
 
 if (config.mercadopago.accessToken) {
   mercadopago.configure({ access_token: config.mercadopago.accessToken });
@@ -241,10 +241,25 @@ const mercadopagoWebhook = async (req, res) => {
 
     // Notificación de correo solo tras verificar el estado en el backend
     if (newPaymentStatus === 'approved') {
-      // Activar (o reutilizar) el QR permanente del usuario. Idempotente ante
-      // webhooks repetidos: activateQr reutiliza el identificador vigente.
+      // Activar (o reutilizar) el QR permanente por perfil. Para pedidos
+      // multi-perfil se activa un QR independiente por cada perfil incluido.
+      // Para pedidos legacy (sin order_profiles) se activa por usuario.
       try {
-        await activateQr(order.user_id, order.id, null);
+        const orderProfiles = await db.query(
+          'SELECT profile_id FROM order_profiles WHERE order_id = ?',
+          [order.id]
+        );
+        if (orderProfiles.length > 0) {
+          for (const op of orderProfiles) {
+            try {
+              await activateQrForProfile(op.profile_id, order.id, null);
+            } catch {
+              // No bloquear la notificación de pago si la activación de un QR falla.
+            }
+          }
+        } else {
+          await activateQr(order.user_id, order.id, null);
+        }
       } catch {
         // No bloquear la notificación de pago si la activación del QR falla.
       }

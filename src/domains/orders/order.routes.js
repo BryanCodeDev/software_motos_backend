@@ -8,7 +8,9 @@ const {
   getOrder,
   createOrder,
   createStickerOrder,
+  createPackageOrder,
 } = require('./order.controller');
+const { packageOrderSchema } = require('./order.schema');
 
 const router = express.Router();
 
@@ -16,6 +18,7 @@ router.get('/', authenticate, catchAsync(listOrders));
 router.get('/:id', authenticate, catchAsync(getOrder));
 router.post('/', authenticate, validate(orderSchema), catchAsync(createOrder));
 router.post('/stickers', authenticate, validate(stickerOrderSchema), catchAsync(createStickerOrder));
+router.post('/package', authenticate, validate(packageOrderSchema), catchAsync(createPackageOrder));
 
 module.exports = router;
 

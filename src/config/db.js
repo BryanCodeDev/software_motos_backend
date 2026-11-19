@@ -25,7 +25,7 @@ const query = async (sql, params = []) => {
 const ignoreDup = (err) => {
   if (!err) {return false;}
   const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
-  const dupErnos = [1060, 1061, 1050, 1062, 1067];
+  const dupErnos = [1060, 1061, 1050, 1062, 1067, 1091];
   const dupMsgs = ['Duplicate column name', 'Duplicate key name', 'Duplicate entry', 'Table already exists', 'Duplicate index', 'Duplicate foreign key constraint name'];
   if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) {return true;}
   return dupMsgs.some((m) => String(err.message || '').includes(m));
@@ -332,6 +332,204 @@ const ensureAdminOrderSchema = async () => {
   await addColumn("ALTER TABLE audit_logs ADD COLUMN new_values JSON NULL DEFAULT NULL AFTER previous_values");
 };
 
+// ---------------------------------------------------------------------------
+// Esquema de multíperfil: una cuenta puede tener varios perfiles (persona,
+// mascota, persona gestionada), cada uno con su propio QR permanente.
+// Aditivo e idempotente: no borra tablas, columnas ni datos históricos.
+// ---------------------------------------------------------------------------
+const ensureMultiProfileSchema = async () => {
+  const addColumn = async (sql) => {
+    try { return await query(sql); } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  };
+
+  // 1. emergency_profiles: permitir varios perfiles por cuenta (quitar UNIQUE user_id).
+  try {
+    await query("ALTER TABLE emergency_profiles DROP INDEX uk_emergency_profiles_user");
+  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+
+  // 2. emergency_profiles: columna de tipo de perfil.
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN profile_type ENUM('person','pet','managed_person') NOT NULL DEFAULT 'person' AFTER is_active");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN relationship VARCHAR(50) NULL DEFAULT NULL AFTER profile_type");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN is_managed_by_third_party TINYINT(1) NOT NULL DEFAULT 0 AFTER relationship");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN consent_accepted TINYINT(1) NOT NULL DEFAULT 0 AFTER is_managed_by_third_party");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN consent_at TIMESTAMP NULL DEFAULT NULL AFTER consent_accepted");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN consent_by INT UNSIGNED NULL DEFAULT NULL AFTER consent_at");
+
+  // 3. emergency_profiles: campos específicos de mascota.
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_species VARCHAR(50) NULL DEFAULT NULL AFTER consent_by");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_breed VARCHAR(100) NULL DEFAULT NULL AFTER pet_species");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_age VARCHAR(30) NULL DEFAULT NULL AFTER pet_breed");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_birth_date DATE NULL DEFAULT NULL AFTER pet_age");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_sex ENUM('macho','hembra','no_especificado') NULL DEFAULT NULL AFTER pet_birth_date");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_weight DECIMAL(5,2) NULL DEFAULT NULL AFTER pet_sex");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_color VARCHAR(60) NULL DEFAULT NULL AFTER pet_weight");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_characteristics TEXT NULL DEFAULT NULL AFTER pet_color");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_microchip VARCHAR(80) NULL DEFAULT NULL AFTER pet_characteristics");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_sterilized TINYINT(1) NULL DEFAULT NULL AFTER pet_microchip");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_vaccines TEXT NULL DEFAULT NULL AFTER pet_sterilized");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_allergies TEXT NULL DEFAULT NULL AFTER pet_vaccines");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_medications TEXT NULL DEFAULT NULL AFTER pet_allergies");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_conditions TEXT NULL DEFAULT NULL AFTER pet_medications");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_vet_name VARCHAR(150) NULL DEFAULT NULL AFTER pet_conditions");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_vet_phone VARCHAR(30) NULL DEFAULT NULL AFTER pet_vet_name");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_owner_name VARCHAR(150) NULL DEFAULT NULL AFTER pet_vet_phone");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_owner_phone VARCHAR(30) NULL DEFAULT NULL AFTER pet_owner_name");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_alternate_contacts TEXT NULL DEFAULT NULL AFTER pet_owner_phone");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_care_instructions TEXT NULL DEFAULT NULL AFTER pet_alternate_contacts");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_lost TINYINT(1) NOT NULL DEFAULT 0 AFTER pet_care_instructions");
+  await addColumn("ALTER TABLE emergency_profiles ADD COLUMN pet_reward VARCHAR(200) NULL DEFAULT NULL AFTER pet_lost");
+
+  await addColumn("CREATE INDEX idx_emergency_profiles_user_type ON emergency_profiles(user_id, profile_type)");
+  await addColumn("CREATE INDEX idx_emergency_profiles_pet_lost ON emergency_profiles(pet_lost)");
+
+  // 4. identifiers: quitar la restricción de un QR activo por USUARIO.
+  //    Ahora es un QR activo por PERFIL.
+  try {
+    await query("ALTER TABLE identifiers DROP INDEX uq_identifiers_one_active_per_user");
+  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  try {
+    await query("ALTER TABLE identifiers DROP COLUMN _one_active_per_user");
+  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+
+  // Un QR activo por perfil (profile_id puede ser NULL; los NULL no se restringen).
+  try {
+    await query(
+      "ALTER TABLE identifiers ADD COLUMN _one_active_per_profile INT UNSIGNED AS (CASE WHEN status IN ('pending_activation','active') THEN profile_id END) VIRTUAL AFTER profile_id"
+    );
+  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  try {
+    await query("CREATE UNIQUE INDEX uq_identifiers_one_active_per_profile ON identifiers(_one_active_per_profile)");
+  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+
+  // 5. orders: campos de paquete multi-perfil.
+  await addColumn("ALTER TABLE orders ADD COLUMN profile_count INT UNSIGNED NOT NULL DEFAULT 1 AFTER sticker_quantity");
+  await addColumn("ALTER TABLE orders ADD COLUMN sticker_total INT UNSIGNED NOT NULL DEFAULT 0 AFTER profile_count");
+  await addColumn("ALTER TABLE orders ADD COLUMN discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0.00 AFTER sticker_total");
+
+  // 6. order_profiles: perfiles incluidos en un pedido (normalizado, no cadena de texto).
+  await query(`
+    CREATE TABLE IF NOT EXISTS order_profiles (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      order_id INT UNSIGNED NOT NULL,
+      profile_id INT UNSIGNED NOT NULL,
+      identifier_id INT UNSIGNED NULL DEFAULT NULL,
+      design_id INT UNSIGNED NULL DEFAULT NULL,
+      quantity_stickers INT UNSIGNED NOT NULL DEFAULT 2,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      KEY idx_order_profiles_order (order_id),
+      KEY idx_order_profiles_profile (profile_id),
+      KEY idx_order_profiles_identifier (identifier_id),
+      CONSTRAINT fk_order_profiles_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+      CONSTRAINT fk_order_profiles_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_order_profiles_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL,
+      CONSTRAINT fk_order_profiles_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 7. product_packages: paquetes comerciales configurables.
+  await query(`
+    CREATE TABLE IF NOT EXISTS product_packages (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      name VARCHAR(120) NOT NULL,
+      slug VARCHAR(120) NOT NULL,
+      description TEXT NULL DEFAULT NULL,
+      line ENUM('person','pet','combo') NOT NULL DEFAULT 'person',
+      profile_count INT UNSIGNED NOT NULL DEFAULT 1,
+      sticker_count INT UNSIGNED NOT NULL DEFAULT 0,
+      price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+      currency CHAR(3) NOT NULL DEFAULT 'COP',
+      original_price DECIMAL(12,2) NULL DEFAULT NULL,
+      discount_percent DECIMAL(5,2) NULL DEFAULT NULL,
+      is_active TINYINT(1) NOT NULL DEFAULT 1,
+      is_visible TINYINT(1) NOT NULL DEFAULT 1,
+      sort_order INT NOT NULL DEFAULT 0,
+      valid_from DATE NULL DEFAULT NULL,
+      valid_to DATE NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_product_packages_slug (slug),
+      KEY idx_product_packages_line_active (line, is_active, is_visible),
+      KEY idx_product_packages_sort (sort_order)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 8. package_profiles: qué tipos y cuántos perfiles incluye cada paquete.
+  await query(`
+    CREATE TABLE IF NOT EXISTS package_profiles (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      package_id INT UNSIGNED NOT NULL,
+      profile_type ENUM('person','pet') NOT NULL DEFAULT 'person',
+      quantity_profiles INT UNSIGNED NOT NULL DEFAULT 1,
+      stickers_per_profile INT UNSIGNED NOT NULL DEFAULT 2,
+      PRIMARY KEY (id),
+      KEY idx_package_profiles_package (package_id),
+      CONSTRAINT fk_package_profiles_package FOREIGN KEY (package_id) REFERENCES product_packages(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 9. price_history: auditoría de cambios de precio.
+  await query(`
+    CREATE TABLE IF NOT EXISTS price_history (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      product_id INT UNSIGNED NULL DEFAULT NULL,
+      package_id INT UNSIGNED NULL DEFAULT NULL,
+      old_price DECIMAL(12,2) NULL DEFAULT NULL,
+      new_price DECIMAL(12,2) NULL DEFAULT NULL,
+      currency CHAR(3) NOT NULL DEFAULT 'COP',
+      changed_by INT UNSIGNED NULL DEFAULT NULL,
+      changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      reason VARCHAR(255) NULL DEFAULT NULL,
+      PRIMARY KEY (id),
+      KEY idx_price_history_product (product_id),
+      KEY idx_price_history_package (package_id),
+      KEY idx_price_history_changed (changed_at),
+      CONSTRAINT fk_price_history_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+      CONSTRAINT fk_price_history_package FOREIGN KEY (package_id) REFERENCES product_packages(id) ON DELETE SET NULL,
+      CONSTRAINT fk_price_history_changed_by FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 10. profile_consent: autorización para perfiles gestionados por terceros.
+  await query(`
+    CREATE TABLE IF NOT EXISTS profile_consent (
+      id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+      profile_id INT UNSIGNED NOT NULL,
+      consent_type ENUM('data_processing','sensitive_data','medical_data','third_party_management') NOT NULL,
+      accepted TINYINT(1) NOT NULL DEFAULT 0,
+      accepted_at TIMESTAMP NULL DEFAULT NULL,
+      accepted_by INT UNSIGNED NULL DEFAULT NULL,
+      ip_address VARCHAR(45) NULL DEFAULT NULL,
+      user_agent VARCHAR(500) NULL DEFAULT NULL,
+      created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (id),
+      UNIQUE KEY uk_profile_consent_profile_type (profile_id, consent_type),
+      KEY idx_profile_consent_profile (profile_id),
+      CONSTRAINT fk_profile_consent_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE CASCADE,
+      CONSTRAINT fk_profile_consent_accepted_by FOREIGN KEY (accepted_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+  `);
+
+  // 11. Datos: backfill profile_id en identifiers donde exista un solo perfil del usuario.
+  try {
+    await query(`
+      UPDATE identifiers i
+      JOIN (
+        SELECT user_id, id AS profile_id
+        FROM emergency_profiles
+        WHERE user_id IS NOT NULL
+        GROUP BY user_id
+        HAVING COUNT(*) = 1
+      ) p ON i.user_id = p.user_id
+      SET i.profile_id = p.profile_id
+      WHERE i.profile_id IS NULL AND i.user_id IS NOT NULL
+    `);
+  } catch {
+    // No bloquear el arranque si el backfill falla en alguna BD.
+  }
+};
+
 const getConnection = async () => getPool().getConnection();
 
 const close = async () => {
@@ -352,4 +550,5 @@ module.exports = {
   ensureInventorySchema,
   ensurePrivacySchema,
   ensureAdminOrderSchema,
+  ensureMultiProfileSchema,
 };

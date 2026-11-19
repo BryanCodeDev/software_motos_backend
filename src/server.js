@@ -39,6 +39,15 @@ const start = async () => {
     console.warn('[ADMIN-ORDER] No se pudieron sincronizar tablas de administración:', err.message);
   }
 
+  // Sincronizar esquema de multíperfil (varios perfiles por cuenta, QR por perfil,
+  // paquetes comerciales, historial de precios, consentimiento).
+  try {
+    await db.ensureMultiProfileSchema();
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[MULTI-PERFIL] No se pudieron sincronizar tablas de multíperfil:', err.message);
+  }
+
   const routes = require('./routes');
   const serverApp = createApp(routes);
 

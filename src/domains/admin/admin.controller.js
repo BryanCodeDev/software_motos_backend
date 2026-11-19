@@ -18,12 +18,14 @@ const updateUserRole = async (req, res) => adminService.updateUserRole(req, res)
 const suspendUser = async (req, res) => adminService.suspendUser(req, res);
 const reactivateUser = async (req, res) => adminService.reactivateUser(req, res);
 const verifyUser = async (req, res) => adminService.verifyUser(req, res);
+const listAllProfiles = async (req, res) => adminService.listAllProfiles(req, res);
 
 module.exports = {
   dashboardStats,
   dashboardAlerts,
   listPayments,
   scanMetrics,
+  listAllProfiles,
   listOrders,
   getOrder,
   updateOrderStatus,

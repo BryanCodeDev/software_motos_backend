@@ -471,6 +471,55 @@ const scanMetrics = async (req, res) => {
   });
 };
 
+/*
+ * Listado administrativo de todos los perfiles (todas las cuentas).
+ * Incluye conteo de QR asociados y pedidos.
+ */
+const listAllProfiles = async (req, res) => {
+  const { q, profile_type, is_active, page = '1', limit = '50' } = req.query;
+  const p = Math.max(1, parseInt(page, 10) || 1);
+  const l = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
+  const offset = (p - 1) * l;
+
+  const where = [];
+  const params = [];
+  if (q) {
+    where.push('(ep.display_name LIKE ? OR u.email LIKE ?)');
+    params.push(`%${q}%`, `%${q}%`);
+  }
+  if (profile_type && ['person', 'pet', 'managed_person'].includes(profile_type)) {
+    where.push('ep.profile_type = ?');
+    params.push(profile_type);
+  }
+  if (is_active !== undefined) {
+    where.push('ep.is_active = ?');
+    params.push(is_active === 'true' || is_active === true ? 1 : 0);
+  }
+  const whereSql = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+  const rows = await db.query(
+    `SELECT ep.id, ep.user_id, ep.profile_type, ep.relationship, ep.display_name, ep.photo_url,
+            ep.is_active, ep.pet_species, ep.pet_breed, ep.pet_lost, ep.created_at,
+            u.email AS owner_email, u.role AS owner_role,
+            (SELECT COUNT(*) FROM identifiers i WHERE i.profile_id = ep.id AND i.status IN ('pending_activation','active')) AS qr_count,
+            (SELECT COUNT(*) FROM order_profiles op WHERE op.profile_id = ep.id) AS order_count
+     FROM emergency_profiles ep
+     JOIN users u ON u.id = ep.user_id
+     ${whereSql}
+     ORDER BY ep.created_at DESC
+     LIMIT ? OFFSET ?`,
+    params.concat([l, offset])
+  );
+  const [countRow] = await db.query(
+    `SELECT COUNT(*) AS total FROM emergency_profiles ep JOIN users u ON u.id = ep.user_id ${whereSql}`,
+    params
+  );
+  return res.json({
+    profiles: rows,
+    pagination: { page: p, limit: l, total: countRow.total, pages: Math.ceil(countRow.total / l) },
+  });
+};
+
 const listOrders = async (req, res) => {
   const rows = await db.query(
     `SELECT o.id, o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity,
@@ -623,6 +672,7 @@ module.exports = {
   dashboardAlerts,
   listPayments,
   scanMetrics,
+  listAllProfiles,
   listOrders,
   updateOrderStatus,
   auditLogs,

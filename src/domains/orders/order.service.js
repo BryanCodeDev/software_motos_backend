@@ -235,6 +235,7 @@ const createOrder = async (req, res) => {
 /* ───────── Compra simplificada de stickers ─────────
    Precio fijo $30.000 COP, un solo diseño, sin dirección de envío requerida.
    El diseño se asocia al pedido (no al identificador QR).
+   Los datos de diseño vienen del frontend; el servidor solo aplica el precio fijo.
   ────────────────────────────────────────────────── */
 const createStickerOrder = async (req, res) => {
   const { design_id } = req.validated.body;
@@ -243,28 +244,6 @@ const createStickerOrder = async (req, res) => {
   const conn = await db.getConnection();
   try {
     await conn.query('START TRANSACTION');
-
-    // Obtener el producto de stickers (precio fijo en servidor, nunca desde el frontend)
-    const [products] = await conn.query(
-      `SELECT id, name, price, currency, slug FROM products WHERE slug = ? AND is_active = 1 AND is_purchasable = 1 LIMIT 1`,
-      [STICKER_PRODUCT_SLUG]
-    );
-    if (products.length === 0) {
-      await conn.query('ROLLBACK');
-      return res.status(404).json({ error: 'Producto de stickers no disponible', code: 'product_not_found' });
-    }
-    const product = products[0];
-
-    // Validar diseño existente y disponible
-    const [designs] = await conn.query(
-      'SELECT id, name, image_url FROM product_designs WHERE id = ? AND product_id = ? AND is_available = 1 LIMIT 1',
-      [design_id, product.id]
-    );
-    if (designs.length === 0) {
-      await conn.query('ROLLBACK');
-      return res.status(404).json({ error: 'Diseño no disponible', code: 'design_not_available' });
-    }
-    const design = designs[0];
 
     // Precio fijo del servidor; el frontend no lo envía ni lo modifica
     const totalAmount = STICKER_FIXED_PRICE;
@@ -277,60 +256,52 @@ const createStickerOrder = async (req, res) => {
     const [result] = await conn.query(
       `INSERT INTO orders (order_number, user_id, product_id, design_id, design_name, design_image_url,
                            sticker_quantity, commercial_status, payment_status, total_amount, currency, shipping_address, customization)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, NULL, ?, NULL, NULL, ?, ?, ?, ?, ?, NULL, ?)`,
       [
         orderNumber,
         userId,
-        product.id,
-        null, // variant_id no aplica en este flujo
-        design.id,
-        design.name,
-        design.image_url,
+        design_id,
         STICKER_PACK_QUANTITY,
         commercialStatus,
         paymentStatus,
         totalAmount,
         currency,
-        null, // sin dirección de envío en este flujo simplificado
-        JSON.stringify({ tipo: 'compra_stickers_simplificada', diseño_seleccionado: design.id }),
+        JSON.stringify({ tipo: 'compra_stickers_simplificada', diseño_seleccionado: design_id }),
       ]
     );
 
     // Ítem del pedido: 2 stickers del mismo diseño, precio unitario = total / 2
     const itemUnitPrice = parseFloat((totalAmount / STICKER_PACK_QUANTITY).toFixed(2));
     await conn.query(
-      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, ?, ?, ?, ?)',
-      [result.insertId, product.id, product.name, itemUnitPrice, STICKER_PACK_QUANTITY]
+      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, NULL, ?, ?, ?)',
+      [result.insertId, 'Sticker QR personalizado', itemUnitPrice, STICKER_PACK_QUANTITY]
     );
 
     // Evento de pago inicial
     await conn.query(
       'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
-      [result.insertId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency, design: { id: design.id, name: design.name } })]
+      [result.insertId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency, design_id })]
     );
 
     await conn.query(
       'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-      [userId, 'order.create_stickers', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id: design.id, sticker_quantity: STICKER_PACK_QUANTITY }), null]
+      [userId, 'order.create_stickers', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id, sticker_quantity: STICKER_PACK_QUANTITY }), null]
     );
 
     await conn.query('COMMIT');
 
-    const order = {
-      id: result.insertId,
-      order_number: orderNumber,
-      product_name: product.name,
-      design_id: design.id,
-      design_name: design.name,
-      design_image_url: design.image_url,
-      sticker_quantity: STICKER_PACK_QUANTITY,
-      commercial_status: commercialStatus,
-      payment_status: paymentStatus,
-      total_amount: totalAmount,
-      currency,
-    };
-
-    return res.status(201).json({ order });
+    return res.status(201).json({
+      order: {
+        id: result.insertId,
+        order_number: orderNumber,
+        design_id,
+        sticker_quantity: STICKER_PACK_QUANTITY,
+        commercial_status: commercialStatus,
+        payment_status: paymentStatus,
+        total_amount: totalAmount,
+        currency,
+      },
+    });
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
     throw error;
@@ -339,6 +310,221 @@ const createStickerOrder = async (req, res) => {
   }
 };
 
+/* ───────── Compra de paquete comercial multi-perfil ─────────
+   Crea un pedido vinculado a un product_package con uno o varios perfiles.
+   El precio y la composición se validan exclusivamente en el servidor.
+   Los perfiles pueden ser existentes (pertenecientes al usuario) o nuevos
+   (se crean durante la compra). Cada perfil recibe su propio QR permanente
+   tras la aprobación del pago (gestionado por el webhook).
+  ────────────────────────────────────────────────── */
+const createPackageOrder = async (req, res) => {
+  const { package_id, profile_ids, new_profiles, shipping_address, customization } = req.validated.body;
+  const userId = req.user.id;
+
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    // 1. Validar que el paquete exista y esté activo/visible.
+    const [packages] = await conn.query(
+      `SELECT id, name, slug, line, profile_count, sticker_count, price, currency,
+              is_active, is_visible
+       FROM product_packages
+       WHERE id = ? AND is_active = 1 AND is_visible = 1`,
+      [package_id]
+    );
+    if (!packages.length) {
+      await conn.query('ROLLBACK');
+      return res.status(404).json({ error: 'Paquete no disponible', code: 'package_not_available' });
+    }
+    const pkg = packages[0];
+
+    // 2. Validar perfiles existentes: deben pertenecer al usuario.
+    const existingProfiles = [];
+    if (profile_ids && profile_ids.length > 0) {
+      const placeholders = profile_ids.map(() => '?').join(',');
+      const rows = await conn.query(
+        `SELECT id, profile_type, is_active FROM emergency_profiles
+         WHERE id IN (${placeholders}) AND user_id = ?`,
+        [...profile_ids, userId]
+      );
+      if (rows.length !== profile_ids.length) {
+        await conn.query('ROLLBACK');
+        return res.status(400).json({ error: 'Uno o más perfiles no pertenecen a esta cuenta', code: 'profiles_not_owned' });
+      }
+      existingProfiles.push(...rows);
+    }
+
+    // 3. Validar que la cantidad de perfiles coincida con el paquete.
+    const totalProfiles = existingProfiles.length + (new_profiles ? new_profiles.length : 0);
+    if (totalProfiles !== pkg.profile_count) {
+      await conn.query('ROLLBACK');
+      return res.status(400).json({
+        error: `El paquete requiere ${pkg.profile_count} perfil(es), se proporcionaron ${totalProfiles}`,
+        code: 'profile_count_mismatch',
+      });
+    }
+
+    // 4. Crear perfiles nuevos si se proporcionan.
+    const createdProfiles = [];
+    if (new_profiles && new_profiles.length > 0) {
+      for (const np of new_profiles) {
+        const {
+          profile_type = 'person',
+          relationship,
+          display_name = '',
+          is_managed_by_third_party = 0,
+          consent_accepted = 0,
+          // campos persona
+          blood_type, date_of_birth, height_cm, weight_kg, is_pregnant, medical_devices,
+          primary_doctor_name, primary_doctor_phone, insurance_company,
+          insurance_policy_number, document_number, is_organ_donor,
+          allergies, medical_conditions, medications, additional_info, emergency_note,
+          // campos mascota
+          pet_species, pet_breed, pet_age, pet_birth_date, pet_sex, pet_weight,
+          pet_color, pet_characteristics, pet_microchip, pet_sterilized,
+          pet_vaccines, pet_allergies, pet_medications, pet_conditions,
+          pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
+          pet_alternate_contacts, pet_care_instructions, pet_lost = 0, pet_reward,
+        } = np;
+
+        if (!['person', 'pet', 'managed_person'].includes(profile_type)) {
+          await conn.query('ROLLBACK');
+          return res.status(400).json({ error: 'Tipo de perfil inválido', code: 'profile_type_invalid' });
+        }
+        if (profile_type === 'managed_person' && is_managed_by_third_party && !consent_accepted) {
+          await conn.query('ROLLBACK');
+          return res.status(400).json({ error: 'Consentimiento requerido para perfil gestionado por tercero', code: 'consent_required' });
+        }
+
+        const [result] = await conn.query(
+          `INSERT INTO emergency_profiles
+            (user_id, profile_type, relationship, is_managed_by_third_party,
+             consent_accepted, consent_at, consent_by,
+             display_name, blood_type, date_of_birth, height_cm, weight_kg,
+             is_pregnant, medical_devices, primary_doctor_name, primary_doctor_phone,
+             insurance_company, insurance_policy_number, document_number, is_organ_donor,
+             allergies, medical_conditions, medications, additional_info, emergency_note,
+             pet_species, pet_breed, pet_age, pet_birth_date, pet_sex, pet_weight,
+             pet_color, pet_characteristics, pet_microchip, pet_sterilized,
+             pet_vaccines, pet_allergies, pet_medications, pet_conditions,
+             pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
+             pet_alternate_contacts, pet_care_instructions, pet_lost, pet_reward,
+             is_active)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            userId, profile_type, relationship, is_managed_by_third_party ? 1 : 0,
+            consent_accepted ? 1 : 0, consent_accepted ? new Date() : null, userId,
+            display_name, blood_type, date_of_birth, height_cm, weight_kg,
+            is_pregnant ? 1 : 0, medical_devices,
+            primary_doctor_name, primary_doctor_phone,
+            insurance_company, insurance_policy_number, document_number,
+            is_organ_donor ? 1 : 0,
+            allergies, medical_conditions, medications, additional_info, emergency_note,
+            pet_species, pet_breed, pet_age, pet_birth_date, pet_sex, pet_weight,
+            pet_color, pet_characteristics, pet_microchip,
+            pet_sterilized !== undefined ? (pet_sterilized ? 1 : 0) : null,
+            pet_vaccines, pet_allergies, pet_medications, pet_conditions,
+            pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
+            pet_alternate_contacts, pet_care_instructions,
+            pet_lost ? 1 : 0, pet_reward,
+            0
+          ]
+        );
+        createdProfiles.push({ id: result.insertId, profile_type, display_name });
+      }
+    }
+
+    // 5. Calcular totales desde el servidor (precio del paquete, no del frontend).
+    const totalAmount = parseFloat(pkg.price);
+    const currency = pkg.currency || 'COP';
+    const orderNumber = generateOrderNumber();
+
+    const commercialStatus = totalAmount > 0 ? 'pending_confirmation' : 'paid';
+    const paymentStatus = totalAmount > 0 ? 'unpaid' : 'approved';
+
+    // 6. Crear la orden.
+    const [result] = await conn.query(
+      `INSERT INTO orders (order_number, user_id, product_id, package_id, design_id, design_name,
+                           design_image_url, sticker_quantity, profile_count, sticker_total,
+                           commercial_status, payment_status, total_amount, currency,
+                           shipping_address, customization)
+       VALUES (?, ?, NULL, ?, NULL, NULL, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        orderNumber,
+        userId,
+        package_id,
+        pkg.sticker_count || 0,
+        totalProfiles,
+        pkg.sticker_count || 0,
+        commercialStatus,
+        paymentStatus,
+        totalAmount,
+        currency,
+        shipping_address ? JSON.stringify(shipping_address) : null,
+        customization ? JSON.stringify(customization) : null,
+      ]
+    );
+    const orderId = result.insertId;
+
+    // 7. Registrar order_profiles (normalizado: un registro por perfil).
+    const allProfiles = [...existingProfiles, ...createdProfiles];
+    for (const profile of allProfiles) {
+      // Determinar stickers para este perfil según la composición del paquete.
+      let stickersForProfile = 2; // default
+      if (pkg.sticker_count && totalProfiles > 0) {
+        stickersForProfile = Math.floor(pkg.sticker_count / totalProfiles);
+      }
+      await conn.query(
+        `INSERT INTO order_profiles (order_id, profile_id, quantity_stickers)
+         VALUES (?, ?, ?)`,
+        [orderId, profile.id, stickersForProfile]
+      );
+    }
+
+    // 8. Ítem del pedido: el paquete como línea única.
+    await conn.query(
+      'INSERT INTO order_items (order_id, product_id, name, price, quantity) VALUES (?, NULL, ?, ?, ?)',
+      [orderId, pkg.name, totalAmount, 1]
+    );
+
+    if (totalAmount > 0) {
+      await conn.query(
+        'INSERT INTO payment_events (order_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
+        [orderId, 'created', 'unpaid', totalAmount, JSON.stringify({ totalAmount, currency, package_id, package_name: pkg.name, profile_count: totalProfiles })]
+      );
+    }
+
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [userId, 'order.create_package', 'orders', String(orderId), JSON.stringify({ order_number: orderNumber, package_id, package_name: pkg.name, total_amount: totalAmount, currency, profile_count: totalProfiles }), null]
+    );
+
+    await conn.query('COMMIT');
+
+    return res.status(201).json({
+      order: {
+        id: orderId,
+        order_number: orderNumber,
+        package_id: pkg.id,
+        package_name: pkg.name,
+        profile_count: totalProfiles,
+        sticker_total: pkg.sticker_count || 0,
+        commercial_status: commercialStatus,
+        payment_status: paymentStatus,
+        total_amount: totalAmount,
+        currency,
+        profiles: allProfiles.map((p) => ({ id: p.id, profile_type: p.profile_type, display_name: p.display_name || '' })),
+      },
+    });
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
 
 const COMMERCIAL_STATUSES = [
   'draft', 'pending_confirmation', 'pending_payment', 'paid', 'preparing',
@@ -812,6 +998,7 @@ module.exports = {
   getOrder,
   createOrder,
   createStickerOrder,
+  createPackageOrder,
   adminListOrders,
   adminGetOrder,
   adminUpdateOrderStatus,
