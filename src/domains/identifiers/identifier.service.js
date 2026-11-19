@@ -558,10 +558,12 @@ const getIdentifierDetail = async (req, res) => {
   const { id } = req.params;
   const rows = await db.query(
     `SELECT i.id, i.user_id, i.value, i.status, i.activation_at, i.print_status,
-            i.created_at, i.updated_at, i.deactivated_at,
-            u.email, u.role, u.created_at AS user_created_at
+            i.created_at, i.updated_at, i.deactivated_at, i.order_id,
+            u.email, u.role, u.created_at AS user_created_at,
+            o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity
      FROM identifiers i
      LEFT JOIN users u ON u.id = i.user_id
+     LEFT JOIN orders o ON o.id = i.order_id
      WHERE i.id = ?`,
     [id]
   );
@@ -580,7 +582,17 @@ const getIdentifierDetail = async (req, res) => {
   );
 
   return res.json({
-    identifier: { ...row, qr_url: qrUrl },
+    identifier: {
+      ...row,
+      qr_url: qrUrl,
+      order: row.order_id ? {
+        order_number: row.order_number,
+        design_id: row.design_id,
+        design_name: row.design_name,
+        design_image_url: row.design_image_url,
+        sticker_quantity: row.sticker_quantity,
+      } : null,
+    },
     user: { id: row.user_id, email: row.email, role: row.role, created_at: row.user_created_at },
     history: logs,
   });
