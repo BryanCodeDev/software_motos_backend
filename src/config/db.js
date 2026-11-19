@@ -25,7 +25,7 @@ const query = async (sql, params = []) => {
 const ignoreDup = (err) => {
   if (!err) {return false;}
   const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
-  const dupErnos = [1060, 1061, 1050, 1062, 1067, 1091];
+  const dupErnos = [1060, 1061, 1050, 1062, 1067, 1091, 1553];
   const dupMsgs = ['Duplicate column name', 'Duplicate key name', 'Duplicate entry', 'Table already exists', 'Duplicate index', 'Duplicate foreign key constraint name'];
   if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) {return true;}
   return dupMsgs.some((m) => String(err.message || '').includes(m));
@@ -343,9 +343,22 @@ const ensureMultiProfileSchema = async () => {
   };
 
   // 1. emergency_profiles: permitir varios perfiles por cuenta (quitar UNIQUE user_id).
+  //    Primero dropear la FK que usa ese índice, luego el índice, y recrear la FK.
+  try {
+    await query("ALTER TABLE emergency_profiles DROP FOREIGN KEY fk_emergency_profiles_user");
+  } catch {
+    // Ignorar si la FK ya no existe.
+  }
   try {
     await query("ALTER TABLE emergency_profiles DROP INDEX uk_emergency_profiles_user");
-  } catch (e) { if (!ignoreDup(e)) { throw e; } }
+  } catch {
+    // Ignorar si el índice ya no existe.
+  }
+  try {
+    await query("ALTER TABLE emergency_profiles ADD CONSTRAINT fk_emergency_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE");
+  } catch {
+    // Ignorar si la FK ya existe.
+  }
 
   // 2. emergency_profiles: columna de tipo de perfil.
   await addColumn("ALTER TABLE emergency_profiles ADD COLUMN profile_type ENUM('person','pet','managed_person') NOT NULL DEFAULT 'person' AFTER is_active");
