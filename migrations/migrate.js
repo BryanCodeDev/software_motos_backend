@@ -167,11 +167,14 @@ async function applyStatement(conn, stmt) {
 }
 
 function assertNotProduction(action) {
-  // Permitir reset/seed en entorno local (localhost/127.0.0.1) incluso si NODE_ENV=production.
+  // Permitir reset/seed en entorno local incluso si NODE_ENV=production.
+  // Solo bloquear cuando estemos claramente en infraestructura de Railway.
   const host = (process.env.DB_HOST || process.env.MYSQLHOST || '').toLowerCase();
-  const isLocal = host === 'localhost' || host === '127.0.0.1' || !host;
-  if (process.env.NODE_ENV === 'production' && !isLocal) {
+  const isRailway = host.includes('railway') || host.includes('up.railway.app');
+  const allowReset = process.env.ALLOW_RESET === 'true';
+  if (process.env.NODE_ENV === 'production' && isRailway && !allowReset) {
     console.error(`ERROR: ${action} no está permitido en producción.`);
+    console.error(`  Si estás en local, configura ALLOW_RESET=true o usa DB_HOST=localhost.`);
     process.exit(1);
   }
 }

@@ -4,9 +4,17 @@ const config = require('./index');
 let pool = null;
 
 const buildUrl = () => {
-  if (config.databaseUrl) {return config.databaseUrl;}
   const { host, port, user, password, database } = config.db;
-  return `mysql://${user}:${encodeURIComponent(password)}@${host}:${port}/${database}`;
+  const hasPlaceholder = (v) => /\{\{[^}]+\}\}/.test(String(v || ''));
+
+  // Si DATABASE_URL existe y no tiene placeholders de Railway, usarla.
+  if (config.databaseUrl && !hasPlaceholder(config.databaseUrl)) {
+    return config.databaseUrl;
+  }
+
+  // Construir desde partes individuales, usando localhost si el host tiene placeholder.
+  const safeHost = hasPlaceholder(host) ? 'localhost' : host;
+  return `mysql://${user}:${encodeURIComponent(password || '')}@${safeHost}:${port}/${database}`;
 };
 
 const getPool = () => {
