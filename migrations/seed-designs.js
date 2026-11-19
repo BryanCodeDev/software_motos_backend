@@ -28,7 +28,7 @@ const DESIGNS = [
 
     if (!products || products.length === 0) {
       console.log('Creando producto sticker-qr-personalizado...');
-      const [result] = await db.query(
+      const result = await db.query(
         `INSERT INTO products (slug, name, price, currency, is_active, is_purchasable, is_visible, sort_order)
          VALUES ('sticker-qr-personalizado', 'Sticker QR personalizado', 30000, 'COP', 1, 1, 1, 1)`
       );
@@ -41,7 +41,7 @@ const DESIGNS = [
 
     // Insertar o actualizar diseños
     for (const design of DESIGNS) {
-      const [existing] = await db.query(
+      const existing = await db.query(
         'SELECT id FROM product_designs WHERE slug = ?',
         [design.slug]
       );
