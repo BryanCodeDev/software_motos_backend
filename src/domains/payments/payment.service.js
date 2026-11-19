@@ -1,11 +1,12 @@
 const db = require('../../config/db');
-const mercadopago = require('mercadopago');
+const { MercadoPagoConfig, Preference, Payment } = require('mercadopago');
 const crypto = require('crypto');
 const config = require('../../config');
 const { activateQr, activateQrForProfile } = require('../identifiers/identifier.service');
 
+let mpClient = null;
 if (config.mercadopago.accessToken) {
-  mercadopago.configure({ access_token: config.mercadopago.accessToken });
+  mpClient = new MercadoPagoConfig({ accessToken: config.mercadopago.accessToken });
 }
 
 const FRONTEND_URL = config.frontendUrl;
@@ -80,7 +81,8 @@ const createPreference = async (req, res) => {
   };
 
   try {
-    const response = await mercadopago.preferences.create(preference);
+    const prefClient = new Preference(mpClient);
+    const response = await prefClient.create({ body: preference });
     const pref = response.body || response;
     await db.query(
       'UPDATE orders SET mercado_pago_preference_id = ? WHERE id = ?',
@@ -175,7 +177,8 @@ const mercadopagoWebhook = async (req, res) => {
     }
 
     // Consultar el estado real en Mercado Pago (nunca confiar solo en la notificación)
-    const payment = await mercadopago.payment.get(paymentId);
+    const paymentClient = new Payment(mpClient);
+    const payment = await paymentClient.get({ id: paymentId });
     const p = payment.body || payment;
     const status = p.status; // approved, pending, rejected, cancelled, refunded
     const externalReference = String(p.external_reference || '');

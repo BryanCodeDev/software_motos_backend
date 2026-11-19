@@ -167,7 +167,10 @@ async function applyStatement(conn, stmt) {
 }
 
 function assertNotProduction(action) {
-  if (process.env.NODE_ENV === 'production') {
+  // Permitir reset/seed en entorno local (localhost/127.0.0.1) incluso si NODE_ENV=production.
+  const host = (process.env.DB_HOST || process.env.MYSQLHOST || '').toLowerCase();
+  const isLocal = host === 'localhost' || host === '127.0.0.1' || !host;
+  if (process.env.NODE_ENV === 'production' && !isLocal) {
     console.error(`ERROR: ${action} no está permitido en producción.`);
     process.exit(1);
   }
