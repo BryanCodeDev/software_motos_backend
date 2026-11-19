@@ -39,6 +39,10 @@ const listProfiles = async (userId) => {
   const rows = await db.query(
     `SELECT id, user_id, profile_type, relationship, display_name, photo_url, is_active,
             is_managed_by_third_party, consent_accepted, consent_at, consent_by,
+            blood_type, date_of_birth, height_cm, weight_kg,
+            is_pregnant, medical_devices, primary_doctor_name, primary_doctor_phone,
+            insurance_company, insurance_policy_number, document_number, is_organ_donor,
+            allergies, medical_conditions, medications, additional_info, emergency_note,
             pet_species, pet_breed, pet_age, pet_birth_date, pet_sex, pet_weight,
             pet_color, pet_characteristics, pet_microchip, pet_sterilized,
             pet_vaccines, pet_allergies, pet_medications, pet_conditions,
