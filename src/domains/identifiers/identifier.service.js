@@ -691,7 +691,7 @@ const getIdentifierDetail = async (req, res) => {
             i.created_at, i.updated_at, i.deactivated_at,
             u.email, u.role, u.created_at AS user_created_at
      FROM identifiers i
-     JOIN users u ON u.id = i.user_id
+     LEFT JOIN users u ON u.id = i.user_id
      WHERE i.id = ?`,
     [id]
   );
