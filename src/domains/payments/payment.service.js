@@ -241,15 +241,15 @@ const mercadopagoWebhook = async (req, res) => {
 
     // Notificación de correo solo tras verificar el estado en el backend
     if (newPaymentStatus === 'approved') {
-      // Activar (o reutilizar) el QR permanente por perfil. Para pedidos
-      // multi-perfil se activa un QR independiente por cada perfil incluido.
-      // Para pedidos legacy (sin order_profiles) se activa por usuario.
+      // Activar el QR automáticamente tras la compra aprobada (stickers o paquete).
+      // La activación viene con la compra del sticker: no hay pago separado de QR.
       try {
         const orderProfiles = await db.query(
           'SELECT profile_id FROM order_profiles WHERE order_id = ?',
           [order.id]
         );
         if (orderProfiles.length > 0) {
+          // Pedido de paquete comercial: activar un QR por perfil.
           for (const op of orderProfiles) {
             try {
               await activateQrForProfile(op.profile_id, order.id, null);
@@ -258,6 +258,7 @@ const mercadopagoWebhook = async (req, res) => {
             }
           }
         } else {
+          // Pedido de stickers simple: activar el QR vinculado al perfil principal.
           await activateQr(order.user_id, order.id, null);
         }
       } catch {

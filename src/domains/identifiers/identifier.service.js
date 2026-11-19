@@ -13,7 +13,6 @@ const buildPublicUrl = (value) => {
   return `${base}/e/${value}`;
 };
 
-const QR_ACTIVATION_PRODUCT_SLUG = 'qr-digital-basico';
 const MAX_IDENTIFIER_TRIES = 10;
 
 // Imagen QR: fondo blanco, alto contraste, margen de seguridad (quiet zone).
@@ -27,29 +26,6 @@ const QR_IMAGE_OPTIONS = {
 const generateQrBuffer = async (value) => {
   const qrUrl = buildPublicUrl(value);
   return QRCode.toBuffer(qrUrl, QR_IMAGE_OPTIONS);
-};
-
-const resolveQrActivationProduct = async () => {
-  const rows = await db.query(
-    `SELECT id, name, slug, price, currency
-     FROM products
-     WHERE slug = ? AND is_active = 1 AND is_purchasable = 1
-     LIMIT 1`,
-    [QR_ACTIVATION_PRODUCT_SLUG]
-  );
-  return rows[0];
-};
-
-const hasPaidQrActivationOrder = async (userId, productId) => {
-  const rows = await db.query(
-    `SELECT id, order_number, payment_status, commercial_status, total_amount, currency, mercado_pago_payment_id
-     FROM orders
-     WHERE user_id = ? AND product_id = ? AND payment_status = 'approved' AND commercial_status = 'paid'
-     ORDER BY created_at DESC
-     LIMIT 1`,
-    [userId, productId]
-  );
-  return rows[0];
 };
 
 const ensureProfile = async (userId) => {
@@ -419,118 +395,6 @@ const activateQrForProfile = async (profileId, orderId, ipAddress = null) => {
   } finally {
     conn.release();
   }
-};
-
-// ---------------------------------------------------------------------------
-// Endpoints existentes del usuario (adaptados a nuevos estados).
-// ---------------------------------------------------------------------------
-const createIdentifier = async (req, res) => {
-  const userId = req.user.id;
-
-  const qrProduct = await resolveQrActivationProduct();
-  if (!qrProduct) {
-    return res.status(500).json({ error: 'Producto de activación de QR no configurado', code: 'product_not_configured' });
-  }
-
-  const expectedAmount = parseFloat(qrProduct.price);
-  let order = await hasPaidQrActivationOrder(userId, qrProduct.id);
-  let usedFallback = false;
-  if (!order) {
-    const fallback = await db.query(
-      `SELECT id, order_number, payment_status, commercial_status, total_amount, currency, mercado_pago_payment_id
-       FROM orders
-       WHERE user_id = ? AND payment_status = 'approved' AND commercial_status = 'paid'
-       ORDER BY created_at DESC
-       LIMIT 1`,
-      [userId]
-    );
-    order = fallback[0];
-    usedFallback = !!order;
-  }
-  if (!order) {
-    return res.status(402).json({ error: 'Se requiere pago aprobado para activar el QR', code: 'payment_required' });
-  }
-
-  const paidAmount = parseFloat(order.total_amount);
-  if (Math.abs(paidAmount - expectedAmount) > 0.009 || order.currency !== qrProduct.currency) {
-    if (!(usedFallback && order.currency === qrProduct.currency && paidAmount >= expectedAmount * 0.5) &&
-        !(Math.abs(paidAmount - expectedAmount) <= 1.0 && order.currency === qrProduct.currency)) {
-      await db.query(
-        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [userId, 'identifier.create.amount_mismatch', 'identifiers', '0', JSON.stringify({ order_id: order.id, expected: expectedAmount, received: paidAmount, currency: order.currency }), req.ip]
-      );
-      return res.status(402).json({ error: 'El pago no coincide con el importe del QR', code: 'amount_mismatch' });
-    }
-  }
-
-  const profile = await ensureProfile(userId);
-
-  // Reutilizar el QR existente del usuario en lugar de crear uno nuevo.
-  const existing = await db.query(
-    'SELECT id, value, status, activation_at FROM identifiers WHERE user_id = ? ORDER BY created_at DESC LIMIT 1',
-    [userId]
-  );
-  if (existing.length > 0) {
-    const ident = existing[0];
-    if (ident.status !== 'active') {
-      await db.query(
-        'UPDATE identifiers SET status = ?, activation_at = NOW(), order_id = COALESCE(order_id, ?) WHERE id = ?',
-        ['active', order.id, ident.id]
-      );
-      await db.query(
-        'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-        [userId, 'identifier.activate', 'identifiers', String(ident.id), JSON.stringify({ value: ident.value, order_id: order.id, previous_status: ident.status }), req.ip]
-      );
-    }
-    const qrUrl = buildPublicUrl(ident.value);
-    return res.status(200).json({
-      identifier: {
-        id: ident.id,
-        value: ident.value,
-        status: 'active',
-        qr_url: qrUrl,
-        order_id: order.id,
-        order_number: order.order_number,
-      },
-    });
-  }
-
-  await db.query('UPDATE emergency_profiles SET is_active = 1 WHERE id = ?', [profile.id]);
-
-  let value;
-  let tries = 0;
-  do {
-    value = generateIdentifierValue();
-    tries += 1;
-    const exists = await db.query('SELECT id FROM identifiers WHERE value = ?', [value]);
-    if (exists.length === 0) { break; }
-  } while (tries < MAX_IDENTIFIER_TRIES);
-
-  if (tries >= MAX_IDENTIFIER_TRIES) {
-    return res.status(500).json({ error: 'No se pudo generar un identificador único', code: 'identifier_generation_failed' });
-  }
-
-  const qrUrl = buildPublicUrl(value);
-
-  const result = await db.query(
-    'INSERT INTO identifiers (user_id, profile_id, order_id, value, status, activation_at) VALUES (?, ?, ?, ?, ?, NOW())',
-    [userId, profile.id, order.id, value, 'active']
-  );
-
-  await db.query(
-    'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-    [userId, 'identifier.create', 'identifiers', String(result.insertId), JSON.stringify({ value, order_id: order.id, order_number: order.order_number }), req.ip]
-  );
-  return res.status(201).json({
-    identifier: {
-      id: result.insertId,
-      value,
-      status: 'active',
-      qr_url: qrUrl,
-      order_id: order.id,
-      order_number: order.order_number,
-    },
-  });
 };
 
 const getMyIdentifier = async (req, res) => {
@@ -1630,7 +1494,6 @@ module.exports = {
   generateIdentifierValue,
   buildPublicUrl,
   generateQrBuffer,
-  createIdentifier,
   getMyIdentifier,
   deactivateIdentifier,
   replaceIdentifier,

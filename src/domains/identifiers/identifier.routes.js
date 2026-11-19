@@ -1,8 +1,7 @@
 const express = require('express');
 const { authenticate } = require('../../middlewares/auth');
 const { catchAsync } = require('../../middlewares/catch-async');
-const { createIdentifier,
-  getMyIdentifier,
+const { getMyIdentifier,
   deactivateIdentifier,
   replaceIdentifier,
   downloadQr,
@@ -12,7 +11,6 @@ const { createIdentifier,
 const router = express.Router();
 
 // Usuario autenticado: su propio QR
-router.post('/', authenticate, catchAsync(createIdentifier));
 router.get('/my', authenticate, catchAsync(getMyIdentifier));
 router.post('/deactivate', authenticate, catchAsync(deactivateIdentifier));
 router.post('/replace', authenticate, catchAsync(replaceIdentifier));

@@ -30,7 +30,7 @@ const DESIGNS = [
       console.log('Creando producto sticker-qr-personalizado...');
       const result = await db.query(
         `INSERT INTO products (slug, name, price, currency, is_active, is_purchasable, is_visible, sort_order)
-         VALUES ('sticker-qr-personalizado', 'Sticker QR personalizado', 30000, 'COP', 1, 1, 1, 1)`
+         VALUES ('sticker-qr-personalizado', 'Sticker QR personalizado', 29900, 'COP', 1, 1, 1, 1)`
       );
       productId = result.insertId;
       console.log(`Producto creado con id ${productId}`);

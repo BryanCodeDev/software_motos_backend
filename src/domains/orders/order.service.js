@@ -1,7 +1,6 @@
 const crypto = require('crypto');
 const db = require('../../config/db');
 const emailService = require('../../domains/email/email.service');
-const { activateQr } = require('../identifiers/identifier.service');
 
 const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
 const STICKER_PACK_QUANTITY = 2;
@@ -73,26 +72,6 @@ const createOrder = async (req, res) => {
     const product = products[0];
 
     const requiresDesign = product.slug === STICKER_PRODUCT_SLUG;
-
-    // Evitar compras duplicadas de la activación única del QR
-    if (product.slug === 'qr-digital-basico') {
-      const [existingActive] = await conn.query(
-        "SELECT id FROM identifiers WHERE user_id = ? AND status = 'active' LIMIT 1",
-        [userId]
-      );
-      if (existingActive.length > 0) {
-        await conn.query('ROLLBACK');
-        return res.status(409).json({ error: 'Ya tienes un QR activado. No es necesario comprarlo de nuevo.', code: 'qr_already_active' });
-      }
-      const [existingPaid] = await conn.query(
-        "SELECT id FROM orders WHERE user_id = ? AND product_id = ? AND payment_status = 'approved' AND commercial_status = 'paid' LIMIT 1",
-        [userId, product.id]
-      );
-      if (existingPaid.length > 0) {
-        await conn.query('ROLLBACK');
-        return res.status(409).json({ error: 'Ya existe un pedido pagado para activar el QR.', code: 'qr_already_paid' });
-      }
-    }
 
     // El producto de stickers exige un diseño seleccionado, disponible y vinculado al producto.
     let design = null;
@@ -181,6 +160,33 @@ const createOrder = async (req, res) => {
       [userId, 'order.create', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id: design ? design.id : null, sticker_quantity: stickerQuantity }), null]
     );
 
+    // Compra de stickers físicos: crear el identifier (QR) vinculado al perfil principal
+    // del usuario, en estado pending_activation. Se activa al aprobarse el pago.
+    if (requiresDesign && paymentStatus === 'unpaid') {
+      try {
+        const [mainProfiles] = await conn.query(
+          'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
+          [userId]
+        );
+        if (mainProfiles.length > 0) {
+          const profileId = mainProfiles[0].id;
+          const [existingIdentifier] = await conn.query(
+            'SELECT id FROM identifiers WHERE user_id = ? AND profile_id = ? AND status IN (?, ?) LIMIT 1',
+            [userId, profileId, 'pending_activation', 'active']
+          );
+          if (existingIdentifier.length === 0) {
+            const value = crypto.randomBytes(8).toString('hex');
+            await conn.query(
+              'INSERT INTO identifiers (user_id, profile_id, value, status, order_id) VALUES (?, ?, ?, ?, ?)',
+              [userId, profileId, value, 'pending_activation', result.insertId]
+            );
+          }
+        }
+      } catch {
+        // No bloquear la creación del pedido si la reserva del QR falla.
+      }
+    }
+
     await conn.query('COMMIT');
 
     const order = {
@@ -196,15 +202,6 @@ const createOrder = async (req, res) => {
       total_amount: totalAmount,
       currency,
     };
-
-    // Pedidos ya pagados (activación gratuita): activar el QR permanente (idempotente).
-    if (product.slug === 'qr-digital-basico' && paymentStatus === 'approved') {
-      try {
-        await activateQr(userId, result.insertId, null);
-      } catch {
-        // No bloquear la creación del pedido si la activación del QR falla.
-      }
-    }
 
     // Confirmación de pedido (transaccional: el backend verifica antes de notificar)
     try {
@@ -298,6 +295,35 @@ const createStickerOrder = async (req, res) => {
       'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
       [userId, 'order.create_stickers', 'orders', String(result.insertId), JSON.stringify({ order_number: orderNumber, total_amount: totalAmount, currency, design_id, sticker_quantity: STICKER_PACK_QUANTITY }), null]
     );
+
+    // Compra de stickers físicos: crear el identificador QR vinculado al perfil principal
+    // del usuario, en estado pending_activation. Se activa al aprobarse el pago (webhook).
+    try {
+      const [mainProfiles] = await conn.query(
+        'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
+        [userId]
+      );
+      if (mainProfiles.length > 0) {
+        const profileId = mainProfiles[0].id;
+        const [existingIdentifier] = await conn.query(
+          'SELECT id FROM identifiers WHERE user_id = ? AND profile_id = ? AND status IN (?, ?) LIMIT 1',
+          [userId, profileId, 'pending_activation', 'active']
+        );
+        if (existingIdentifier.length === 0) {
+          const value = crypto.randomBytes(8).toString('hex');
+          await conn.query(
+            'INSERT INTO identifiers (user_id, profile_id, value, status, order_id) VALUES (?, ?, ?, ?, ?)',
+            [userId, profileId, value, 'pending_activation', result.insertId]
+          );
+          await conn.query(
+            'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+            [userId, 'identifier.create.pending_stickers', 'identifiers', String(result.insertId), JSON.stringify({ order_id: result.insertId, order_number: orderNumber, profile_id: profileId }), null]
+          );
+        }
+      }
+    } catch {
+      // No bloquear la creación del pedido si la reserva del QR falla.
+    }
 
     await conn.query('COMMIT');
 
