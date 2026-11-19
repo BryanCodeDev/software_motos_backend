@@ -84,6 +84,30 @@ FROM products p
 WHERE p.slug = 'sticker-qr-personalizado'
   AND NOT EXISTS (SELECT 1 FROM product_designs d WHERE d.product_id = p.id AND d.slug = 'diseno-6');
 
+INSERT INTO product_designs (product_id, name, slug, description, image_url, is_available, sort_order)
+SELECT p.id, 'Diseño 7', 'diseno-7', 'Diseño de sticker para casco y moto. Plantilla gráfica 7.', '/img/sticker-7.png', 1, 7
+FROM products p
+WHERE p.slug = 'sticker-qr-personalizado'
+  AND NOT EXISTS (SELECT 1 FROM product_designs d WHERE d.product_id = p.id AND d.slug = 'diseno-7');
+
+INSERT INTO product_designs (product_id, name, slug, description, image_url, is_available, sort_order)
+SELECT p.id, 'Diseño 8', 'diseno-8', 'Diseño de sticker para casco y moto. Plantilla gráfica 8.', '/img/sticker-8.png', 1, 8
+FROM products p
+WHERE p.slug = 'sticker-qr-personalizado'
+  AND NOT EXISTS (SELECT 1 FROM product_designs d WHERE d.product_id = p.id AND d.slug = 'diseno-8');
+
+INSERT INTO product_designs (product_id, name, slug, description, image_url, is_available, sort_order)
+SELECT p.id, 'Diseño 9', 'diseno-9', 'Diseño de sticker para casco y moto. Plantilla gráfica 9.', '/img/sticker-9.png', 1, 9
+FROM products p
+WHERE p.slug = 'sticker-qr-personalizado'
+  AND NOT EXISTS (SELECT 1 FROM product_designs d WHERE d.product_id = p.id AND d.slug = 'diseno-9');
+
+INSERT INTO product_designs (product_id, name, slug, description, image_url, is_available, sort_order)
+SELECT p.id, 'Diseño 10', 'diseno-10', 'Diseño de sticker para casco y moto. Plantilla gráfica 10.', '/img/sticker-10.png', 1, 10
+FROM products p
+WHERE p.slug = 'sticker-qr-personalizado'
+  AND NOT EXISTS (SELECT 1 FROM product_designs d WHERE d.product_id = p.id AND d.slug = 'diseno-10');
+
 -- =====================================================
 -- 4. PAQUETES COMERCIALES (product_packages)
 -- Precios y composiciones definitivas de lanzamiento.

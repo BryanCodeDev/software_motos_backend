@@ -2,9 +2,9 @@ const { z } = require('zod');
 
 const orderSchema = z.object({
   body: z.object({
-    product_id: z.string().uuid(),
-    design_id: z.string().uuid().optional(),
-    variant_id: z.string().uuid().optional(),
+    product_id: z.coerce.number().int().positive(),
+    design_id: z.coerce.number().int().positive().optional(),
+    variant_id: z.coerce.number().int().positive().optional(),
     shipping_address: z.record(z.any()).optional().nullable(),
     customization: z.record(z.any()).optional().nullable(),
   }),
@@ -18,8 +18,8 @@ const stickerOrderSchema = z.object({
 
 const packageOrderSchema = z.object({
   body: z.object({
-    package_id: z.string().uuid().optional(),
-    profile_ids: z.array(z.string().uuid()).optional(),
+    package_id: z.coerce.number().int().positive().optional(),
+    profile_ids: z.array(z.coerce.number().int().positive()).optional(),
     new_profiles: z.array(z.object({
       profile_type: z.enum(['person', 'pet', 'managed_person']).optional().default('person'),
       relationship: z.string().max(50).optional().nullable(),
