@@ -507,4 +507,81 @@ CREATE TABLE IF NOT EXISTS qr_scans (
   CONSTRAINT fk_qr_scans_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 025: Paquetes comerciales configurables (catálogo de productos y precios).
+CREATE TABLE IF NOT EXISTS product_packages (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  name VARCHAR(120) NOT NULL,
+  slug VARCHAR(120) NOT NULL,
+  description TEXT NULL DEFAULT NULL,
+  line ENUM('person', 'pet', 'combo') NOT NULL DEFAULT 'person',
+  profile_count INT UNSIGNED NOT NULL DEFAULT 1,
+  sticker_count INT UNSIGNED NOT NULL DEFAULT 0,
+  price DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+  currency CHAR(3) NOT NULL DEFAULT 'COP',
+  original_price DECIMAL(12,2) NULL DEFAULT NULL,
+  discount_percent DECIMAL(5,2) NULL DEFAULT NULL,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  is_visible TINYINT(1) NOT NULL DEFAULT 1,
+  sort_order INT NOT NULL DEFAULT 0,
+  valid_from DATE NULL DEFAULT NULL,
+  valid_to DATE NULL DEFAULT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_product_packages_slug (slug),
+  KEY idx_product_packages_line_active (line, is_active, is_visible),
+  KEY idx_product_packages_sort (sort_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 026: Composición de paquetes (qué tipos y cuántos perfiles incluye cada paquete).
+CREATE TABLE IF NOT EXISTS package_profiles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  package_id INT UNSIGNED NOT NULL,
+  profile_type ENUM('person', 'pet') NOT NULL DEFAULT 'person',
+  quantity_profiles INT UNSIGNED NOT NULL DEFAULT 1,
+  stickers_per_profile INT UNSIGNED NOT NULL DEFAULT 2,
+  PRIMARY KEY (id),
+  KEY idx_package_profiles_package (package_id),
+  CONSTRAINT fk_package_profiles_package FOREIGN KEY (package_id) REFERENCES product_packages(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 027: Perfiles incluidos en un pedido (relación normalizada pedido-perfil).
+CREATE TABLE IF NOT EXISTS order_profiles (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  order_id INT UNSIGNED NOT NULL,
+  profile_id INT UNSIGNED NOT NULL,
+  identifier_id INT UNSIGNED NULL DEFAULT NULL,
+  design_id INT UNSIGNED NULL DEFAULT NULL,
+  quantity_stickers INT UNSIGNED NOT NULL DEFAULT 2,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_order_profiles_order (order_id),
+  KEY idx_order_profiles_profile (profile_id),
+  KEY idx_order_profiles_identifier (identifier_id),
+  CONSTRAINT fk_order_profiles_order FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE,
+  CONSTRAINT fk_order_profiles_profile FOREIGN KEY (profile_id) REFERENCES emergency_profiles(id) ON DELETE CASCADE,
+  CONSTRAINT fk_order_profiles_identifier FOREIGN KEY (identifier_id) REFERENCES identifiers(id) ON DELETE SET NULL,
+  CONSTRAINT fk_order_profiles_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 028: Historial de cambios de precios de productos y paquetes.
+CREATE TABLE IF NOT EXISTS price_history (
+  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  product_id INT UNSIGNED NULL DEFAULT NULL,
+  package_id INT UNSIGNED NULL DEFAULT NULL,
+  old_price DECIMAL(12,2) NULL DEFAULT NULL,
+  new_price DECIMAL(12,2) NULL DEFAULT NULL,
+  currency CHAR(3) NOT NULL DEFAULT 'COP',
+  changed_by INT UNSIGNED NULL DEFAULT NULL,
+  changed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  reason VARCHAR(255) NULL DEFAULT NULL,
+  PRIMARY KEY (id),
+  KEY idx_price_history_product (product_id),
+  KEY idx_price_history_package (package_id),
+  KEY idx_price_history_changed (changed_at),
+  CONSTRAINT fk_price_history_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE SET NULL,
+  CONSTRAINT fk_price_history_package FOREIGN KEY (package_id) REFERENCES product_packages(id) ON DELETE SET NULL,
+  CONSTRAINT fk_price_history_changed_by FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 1;
