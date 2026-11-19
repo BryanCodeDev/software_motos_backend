@@ -1,6 +1,6 @@
 const db = require('../../config/db');
 const { hashPassword } = require('../../utils/crypto');
-const { activateQr, buildPublicUrl } = require('../identifiers/identifier.service');
+const { buildPublicUrl } = require('../identifiers/identifier.service');
 
 const isAdmin = async (userId) => {
   const rows = await db.query('SELECT role FROM users WHERE id = ?', [userId]);
@@ -525,100 +525,6 @@ const listAllProfiles = async (req, res) => {
   });
 };
 
-const listOrders = async (req, res) => {
-  const rows = await db.query(
-    `SELECT o.id, o.order_number, o.design_id, o.design_name, o.design_image_url, o.sticker_quantity,
-            o.commercial_status, o.payment_status, o.total_amount, o.currency, o.shipping_address, o.created_at,
-            u.email AS customer_email, p.name AS product_name,
-            (SELECT i2.value FROM identifiers i2 WHERE i2.user_id = u.id AND i2.status IN ('pending_activation', 'active') ORDER BY i2.created_at DESC LIMIT 1) AS qr_value
-     FROM orders o
-     JOIN users u ON o.user_id = u.id
-     JOIN products p ON o.product_id = p.id
-     ORDER BY o.created_at DESC
-     LIMIT 100`
-  );
-  return res.json({ orders: rows });
-};
-
-const updateOrderStatus = async (req, res) => {
-  const { id } = req.params;
-  const { commercial_status, payment_status } = req.body;
-  const allowed = [
-    'draft',
-    'pending_confirmation',
-    'pending_payment',
-    'paid',
-    'preparing',
-    'shipped',
-    'delivered',
-    'cancelled',
-    'refund_requested',
-    'refunded',
-  ];
-  // El estado de pago 'approved' solo puede ser establecido por la verificación del
-  // webhook de la pasarela (servidor), nunca por edición manual del administrador.
-  const paymentAllowed = ['unpaid', 'pending', 'approved', 'rejected', 'cancelled', 'refunded'];
-
-  if (commercial_status !== undefined && !allowed.includes(commercial_status)) {
-    return res.status(400).json({ error: 'Estado comercial inválido' });
-  }
-  if (payment_status !== undefined && !paymentAllowed.includes(payment_status)) {
-    return res.status(400).json({ error: 'Estado de pago inválido' });
-  }
-
-  const existing = await db.query('SELECT id, user_id, design_id FROM orders WHERE id = ?', [id]);
-  if (!existing || existing.length === 0) {
-    return res.status(404).json({ error: 'Pedido no encontrado' });
-  }
-  const orderUserId = existing[0].user_id;
-  const orderDesignId = existing[0].design_id;
-
-  // Para pedidos de stickers físicos (tienen design_id), el QR físico se asigna/genera
-  // desde el webhook de pago (assignOrCreateForOrder), no desde la edición manual del
-  // pedido. activateQr se reserva para el flujo del QR digital básico.
-  const isStickerOrder = orderDesignId !== null;
-
-  const fields = [];
-  const values = [];
-  if (commercial_status !== undefined) {
-    fields.push('commercial_status = ?');
-    values.push(commercial_status);
-  }
-  if (payment_status !== undefined) {
-    fields.push('payment_status = ?');
-    values.push(payment_status);
-  }
-  // Pago por WhatsApp: al marcar pagado, sincronizar estado de pago.
-  if (commercial_status === 'paid' && payment_status === undefined) {
-    fields.push('payment_status = ?');
-    values.push('approved');
-  }
-  if (payment_status === 'approved' && commercial_status === undefined) {
-    fields.push('commercial_status = ?');
-    values.push('paid');
-  }
-  values.push(id);
-  await db.query(`UPDATE orders SET ${fields.join(', ')} WHERE id = ?`, values);
-
-  // Activar el QR permanente del usuario cuando el pago queda aprobado (idempotente).
-  // Se omite para pedidos de stickers físicos: su QR físico se gestiona por compra/inventario.
-  const becamePaid = payment_status === 'approved' || commercial_status === 'paid';
-  if (becamePaid && !isStickerOrder) {
-    try {
-      await activateQr(orderUserId, id, req.ip);
-    } catch {
-      // No bloquear la actualización del pedido si la activación del QR falla.
-    }
-  }
-
-  await db.query(
-    'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
-    [req.user.id, 'admin.order.update', 'orders', String(id), JSON.stringify({ commercial_status, payment_status }), req.ip]
-  );
-
-  return res.json({ message: 'Pedido actualizado' });
-};
-
 const auditLogs = async (req, res) => {
   const rows = await db.query(
     `SELECT a.id, a.action, a.entity_type, a.entity_id, a.metadata, a.ip_address, a.created_at, u.email AS actor_email
@@ -678,8 +584,6 @@ module.exports = {
   listPayments,
   scanMetrics,
   listAllProfiles,
-  listOrders,
-  updateOrderStatus,
   auditLogs,
   bootstrapAdmin,
 };
