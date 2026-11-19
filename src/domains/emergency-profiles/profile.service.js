@@ -195,6 +195,9 @@ const createProfile = async ({ userId, data, ipAddress }) => {
     return { profile: created };
   } catch (error) {
     await conn.query('ROLLBACK').catch(() => {});
+    if (error && error.code === 'ER_DUP_ENTRY') {
+      return { error: 'profile_already_exists', status: 409, detail: 'Ya existe un perfil de emergencia para esta cuenta.' };
+    }
     throw error;
   } finally {
     conn.release();

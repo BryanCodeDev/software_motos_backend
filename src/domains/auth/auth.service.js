@@ -13,7 +13,7 @@ const clearAuthTokens = () => {
 };
 
 const register = async (req, res) => {
-  const { name, email, password } = req.validated.body;
+  const { name, email, password, profile_type = 'person', display_name = '', relationship = null, consent_accepted = false } = req.validated.body;
 
   const role = 'user';
 
@@ -34,17 +34,19 @@ const register = async (req, res) => {
     [userId, 'user.register', 'users', String(userId), JSON.stringify({ email, role }), req.ip]
   );
 
-  // El registro de una cuenta NO genera un QR físico ni consume inventario.
-  // Se crea el perfil de emergencia vacío para que el usuario complete su
-  // información y privacidad sin comprar. El QR definitivo se asigna o genera
-  // cuando el usuario realiza una compra de stickers.
+  // El registro de una cuenta genera el perfil de emergencia inicial con el tipo y nombre
+  // que el usuario eligió. El QR definitivo se asigna o genera cuando el usuario realiza una
+  // compra de stickers (pago requerido para perfiles adicionales o activación del QR).
   try {
+    if (profile_type === 'managed_person' && !consent_accepted) {
+      throw Object.assign(new Error('consent_required'), { code: 'consent_required', status: 400 });
+    }
     await db.query(
-      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
-      [userId, '']
+      'INSERT INTO emergency_profiles (user_id, profile_type, relationship, display_name, is_active) VALUES (?, ?, ?, ?, 0)',
+      [userId, profile_type, relationship, display_name || name]
     );
   } catch (err) {
-    if (err.code !== 'ER_DUP_ENTRY') {throw err;}
+    throw err;
   }
 
   const ip = req.ip;

@@ -11,6 +11,11 @@ const registerSchema = z.object({
     name: z.string().trim().min(2, 'El nombre debe tener al menos 2 caracteres').max(100),
     email: emailSchema,
     password: passwordSchema,
+    // Perfil de emergencia inicial (opcional): el usuario elige el tipo y nombre al registrarse.
+    profile_type: z.enum(['person', 'pet', 'managed_person']).optional().default('person'),
+    display_name: z.string().trim().min(1).max(100).optional().default(''),
+    relationship: z.string().max(50).optional().nullable(),
+    consent_accepted: z.boolean().optional().default(false),
   }),
 });
 
