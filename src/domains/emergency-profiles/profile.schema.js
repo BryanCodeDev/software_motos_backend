@@ -80,7 +80,7 @@ const profileUpdateSchema = z.object({
 
 const photoUploadSchema = z.object({
   body: z.object({
-    profile_id: z.string().uuid().optional(),
+    profile_id: z.string().uuid().or(z.number().int().positive()).optional(),
     photo_data: z.string().optional().nullable(),
   }),
 });

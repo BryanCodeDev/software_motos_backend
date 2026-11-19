@@ -81,10 +81,19 @@ const deleteContact = async (req, res) => {
 };
 
 const getOrCreateProfile = async (userId) => {
-  let rows = await db.query('SELECT id FROM emergency_profiles WHERE user_id = ?', [userId]);
+  // Preferir el perfil principal (is_main=1); si no existe, el primero por antigüedad.
+  let rows = await db.query(
+    'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
+    [userId]
+  );
+  if (rows.length === 0) {
+    rows = await db.query('SELECT id FROM emergency_profiles WHERE user_id = ? ORDER BY created_at ASC LIMIT 1', [
+      userId,
+    ]);
+  }
   if (rows.length === 0) {
     const result = await db.query(
-      'INSERT INTO emergency_profiles (user_id, display_name, is_active) VALUES (?, ?, 0)',
+      'INSERT INTO emergency_profiles (user_id, display_name, is_active, is_main) VALUES (?, ?, 0, 1)',
       [userId, '']
     );
     return { id: result.insertId };

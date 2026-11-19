@@ -50,7 +50,9 @@ const listUsers = async (req, res) => {
       params.concat([l, offset])
     );
     const countRows = await db.query(
-      `SELECT COUNT(DISTINCT u.id) AS total FROM users u ${whereSql}`,
+      `SELECT COUNT(DISTINCT u.id) AS total FROM users u
+       LEFT JOIN identifiers i ON i.user_id = u.id AND i.status IN ('pending_activation', 'active')
+       ${whereSql}`,
       params
     );
     return { users: rows, total: countRows[0].total };

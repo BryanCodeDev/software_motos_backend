@@ -80,12 +80,14 @@ CREATE TABLE IF NOT EXISTS emergency_profiles (
   additional_info TEXT NULL DEFAULT NULL,
   emergency_note VARCHAR(255) NULL DEFAULT NULL,
   is_active TINYINT(1) NOT NULL DEFAULT 0,
+  is_main TINYINT(1) NOT NULL DEFAULT 0,
   consent_version VARCHAR(20) NULL DEFAULT NULL,
   consent_updated_at TIMESTAMP NULL DEFAULT NULL,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
-  UNIQUE KEY uk_emergency_profiles_user (user_id),
+  KEY idx_emergency_profiles_user (user_id),
+  KEY idx_emergency_profiles_main (user_id, is_main),
   KEY idx_emergency_profiles_active (is_active),
   CONSTRAINT fk_emergency_profiles_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -143,7 +145,6 @@ CREATE TABLE IF NOT EXISTS identifiers (
   _one_active_per_user INT UNSIGNED AS (CASE WHEN status IN ('pending_activation', 'active') THEN user_id END) VIRTUAL,
   PRIMARY KEY (id),
   UNIQUE KEY uk_identifiers_value (value),
-  UNIQUE KEY uq_identifiers_one_active_per_user (_one_active_per_user),
   KEY idx_identifiers_user (user_id),
   KEY idx_identifiers_status (status),
   KEY idx_identifiers_print_status (print_status),
@@ -537,5 +538,12 @@ CREATE TABLE IF NOT EXISTS price_history (
   CONSTRAINT fk_price_history_package FOREIGN KEY (package_id) REFERENCES product_packages(id) ON DELETE SET NULL,
   CONSTRAINT fk_price_history_changed_by FOREIGN KEY (changed_by) REFERENCES users(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Migración idempotente: permitir múltiples perfiles de emergencia por usuario
+-- (quitar unicidad de user_id), agregar is_main y permitir múltiples QR activos por usuario.
+ALTER TABLE emergency_profiles ADD COLUMN is_main TINYINT(1) NOT NULL DEFAULT 0 AFTER is_active;
+ALTER TABLE emergency_profiles DROP INDEX uk_emergency_profiles_user;
+ALTER TABLE emergency_profiles ADD INDEX idx_emergency_profiles_main (user_id, is_main);
+ALTER TABLE identifiers DROP INDEX uq_identifiers_one_active_per_user;
 
 SET FOREIGN_KEY_CHECKS = 1;

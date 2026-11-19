@@ -290,8 +290,14 @@ const activateQr = async (userId, orderId, ipAddress = null) => {
       }
     }
 
-    // Activar el perfil de emergencia asociado al QR activo.
-    await conn.query('UPDATE emergency_profiles SET is_active = 1 WHERE user_id = ?', [userId]);
+    // Activar solo el perfil de emergencia principal del usuario (uno a la vez).
+    const [mainProfileRows] = await conn.query(
+      'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
+      [userId]
+    );
+    if (mainProfileRows.length > 0) {
+      await conn.query('UPDATE emergency_profiles SET is_active = 1 WHERE id = ?', [mainProfileRows[0].id]);
+    }
 
     await conn.query('COMMIT');
     return { identifier, qr_url: buildPublicUrl(identifier.value) };
@@ -1269,7 +1275,14 @@ const linkQrToUser = async ({ qrId, userId, actorId, ipAddress = null }) => {
       'UPDATE identifiers SET user_id = ?, status = COALESCE(NULLIF(status, ?), ?) WHERE id = ?',
       [userId, 'pending_activation', 'pending_activation', qrId]
     );
-    await conn.query('UPDATE emergency_profiles SET is_active = 1 WHERE user_id = ?', [userId]);
+    // Activar solo el perfil de emergencia principal del usuario.
+    const [mainProfileRows] = await conn.query(
+      'SELECT id FROM emergency_profiles WHERE user_id = ? AND is_main = 1 LIMIT 1',
+      [userId]
+    );
+    if (mainProfileRows.length > 0) {
+      await conn.query('UPDATE emergency_profiles SET is_active = 1 WHERE id = ?', [mainProfileRows[0].id]);
+    }
     await conn.query(
       'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
       [

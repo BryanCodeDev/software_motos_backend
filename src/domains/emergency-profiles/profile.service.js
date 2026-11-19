@@ -51,7 +51,7 @@ const listProfiles = async (userId) => {
             consent_version, consent_updated_at, created_at, updated_at
      FROM emergency_profiles
      WHERE user_id = ?
-     ORDER BY created_at ASC`,
+     ORDER BY is_main DESC, created_at ASC`,
     [userId]
   );
   return rows;
@@ -99,6 +99,7 @@ const createProfile = async ({ userId, data, ipAddress }) => {
     pet_vaccines, pet_allergies, pet_medications, pet_conditions,
     pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
     pet_alternate_contacts, pet_care_instructions, pet_lost = 0, pet_reward,
+    is_main = 0,
   } = data || {};
 
   if (!PROFILE_TYPES.includes(profile_type)) {
@@ -114,6 +115,18 @@ const createProfile = async ({ userId, data, ipAddress }) => {
   try {
     await conn.query('START TRANSACTION');
 
+    // Si es el primer perfil del usuario, se marca como principal (is_main=1).
+    let mainFlag = is_main ? 1 : 0;
+    if (mainFlag === 0) {
+      const [existing] = await conn.query(
+        'SELECT id FROM emergency_profiles WHERE user_id = ? LIMIT 1',
+        [userId]
+      );
+      if (existing.length === 0) {
+        mainFlag = 1;
+      }
+    }
+
     const [result] = await conn.query(
       `INSERT INTO emergency_profiles
         (user_id, profile_type, relationship, is_managed_by_third_party,
@@ -127,9 +140,9 @@ const createProfile = async ({ userId, data, ipAddress }) => {
          pet_vaccines, pet_allergies, pet_medications, pet_conditions,
          pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
          pet_alternate_contacts, pet_care_instructions, pet_lost, pet_reward,
-         is_active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-               ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         is_active, is_main)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         userId, profile_type, relationship, is_managed_by_third_party ? 1 : 0,
         consent_accepted ? 1 : 0,
@@ -147,7 +160,7 @@ const createProfile = async ({ userId, data, ipAddress }) => {
         pet_vet_name, pet_vet_phone, pet_owner_name, pet_owner_phone,
         pet_alternate_contacts, pet_care_instructions,
         pet_lost ? 1 : 0, pet_reward,
-        0
+        0, mainFlag
       ]
     );
     const profileId = result.insertId;
@@ -317,6 +330,14 @@ const deactivateProfile = async ({ userId, profileId, ipAddress }) => {
   }
   if (!profile.is_active) {
     return { error: 'profile_inactive', status: 409 };
+  }
+  // No permitir desactivar el perfil principal de la cuenta.
+  if (profile.is_main) {
+    return {
+      error: 'profile_is_main',
+      status: 409,
+      detail: 'No puedes desactivar tu perfil principal. Promueve otro perfil a principal antes de desactivar este.',
+    };
   }
 
   const conn = await db.getConnection();

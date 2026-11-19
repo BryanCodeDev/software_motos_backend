@@ -45,16 +45,20 @@ const updateMyProfile = async (req, res) => {
   const userId = req.user.id;
   const profiles = await profileService.listProfiles(userId);
   let profileId;
+  // El perfil principal (is_main=1) es el que representa la cuenta del usuario.
+  const mainProfile = profiles.find((p) => p.is_main === 1 || p.is_main === true);
   if (profiles.length === 0) {
     const created = await profileService.createProfile({
       userId,
-      data: { profile_type: 'person', display_name: '' },
+      data: { profile_type: 'person', display_name: '', is_main: 1 },
       ipAddress: req.ip,
     });
     if (created.error) {
       return res.status(created.status).json({ error: created.error, code: created.error });
     }
     profileId = created.profile.id;
+  } else if (mainProfile) {
+    profileId = mainProfile.id;
   } else {
     profileId = profiles[0].id;
   }

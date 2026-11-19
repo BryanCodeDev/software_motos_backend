@@ -135,8 +135,12 @@ function stripCreateDatabaseAndUse(sql) {
 // ignoran para que el esquema sea idempotente sobre bases existentes.
 const ignoreSchemaErr = (err) => {
   if (!err) return false;
-  const dupCodes = ['ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_TABLE_EXISTS', 'ER_DUP_INDEX'];
-  const dupErnos = [1050, 1060, 1061, 1062, 1067, 1068];
+  const dupCodes = [
+    'ER_DUP_FIELD', 'ER_DUP_FIELDNAME', 'ER_DUP_KEYNAME', 'ER_DUP_ENTRY',
+    'ER_TABLE_EXISTS', 'ER_DUP_INDEX', 'ER_DROP_KEYNAME', 'ER_CANT_DROP_FIELD',
+    'ER_CANT_DROP_INDEX_OR_KEY',
+  ];
+  const dupErnos = [1050, 1060, 1061, 1062, 1067, 1068, 1091];
   const dupMsgs = [
     'Duplicate column name',
     'Duplicate key name',
@@ -145,6 +149,8 @@ const ignoreSchemaErr = (err) => {
     'Duplicate index',
     'Duplicate foreign key constraint name',
     'Cannot add foreign key constraint',
+    "Can't DROP",
+    'check that column/key exists',
   ];
   if (dupCodes.includes(err.code) || dupErnos.includes(err.errno)) return true;
   return dupMsgs.some((m) => String(err.message || '').includes(m));
