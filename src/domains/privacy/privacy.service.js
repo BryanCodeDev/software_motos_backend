@@ -108,6 +108,38 @@ const recordPrivacySettingsChange = async (userId, ipAddress, userAgent) => {
   }
 };
 
+const updatePrivacySettings = async (userId, settings, ipAddress, userAgent) => {
+  if (!Array.isArray(settings) || settings.length === 0) {
+    return { updated: 0 };
+  }
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+    let updated = 0;
+    for (const s of settings) {
+      if (!s.profile_id || !s.field_name || typeof s.is_public !== 'boolean') continue;
+      await conn.query(
+        `INSERT INTO privacy_settings (profile_id, field_name, is_public) VALUES (?, ?, ?)
+         ON DUPLICATE KEY UPDATE is_public = VALUES(is_public), updated_at = NOW()`,
+        [s.profile_id, s.field_name, s.is_public ? 1 : 0]
+      );
+      updated += 1;
+    }
+    await conn.query(
+      `INSERT INTO consent_records
+        (user_id, document_type, document_version, accepted, purpose, method, ip_address, user_agent)
+       VALUES (?, 'privacy', ?, 1, 'Actualización de configuración de visibilidad del perfil desde el centro de privacidad', 'privacy_center', ?, ?)`,
+      [userId, DEFAULT_PRIVACY_VERSION, ipAddress || null, userAgent || null]
+    );
+    await conn.query('COMMIT');
+    return { updated };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
 module.exports = {
   recordConsent,
   getConsentHistory,
@@ -118,6 +150,7 @@ module.exports = {
   listAllDataRequests,
   respondToDataRequest,
   recordPrivacySettingsChange,
+  updatePrivacySettings,
   DEFAULT_TERMS_VERSION,
   DEFAULT_PRIVACY_VERSION,
 };

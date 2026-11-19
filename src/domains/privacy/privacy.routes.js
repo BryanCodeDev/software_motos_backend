@@ -8,6 +8,7 @@ const {
   getConsentHistory,
   getConsentStatus,
   getPrivacySettings,
+  updatePrivacySettings,
   createDataRequest,
   listMyDataRequests,
   listAllDataRequests,
@@ -18,6 +19,7 @@ const router = express.Router();
 
 /* --- Privacidad del usuario autenticado --- */
 router.get('/me', authenticate, catchAsync(getPrivacySettings));
+router.patch('/me', authenticate, catchAsync(updatePrivacySettings));
 
 /* --- Consentimientos del usuario autenticado --- */
 router.get('/consents/me', authenticate, catchAsync(getConsentStatus));

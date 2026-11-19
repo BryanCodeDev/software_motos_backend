@@ -114,8 +114,18 @@ const respondToDataRequest = async (req, res) => {
   return res.json({ message: 'Solicitud atendida', request: result });
 };
 
+const updatePrivacySettings = async (req, res) => {
+  const { user } = req;
+  const { settings } = req.body || {};
+  if (!Array.isArray(settings) || settings.length === 0) {
+    return res.status(400).json({ error: 'settings es requerido y debe ser un array', code: 'invalid_settings' });
+  }
+  const result = await privacyService.updatePrivacySettings(user.id, settings, req.ip, req.get('User-Agent') || null);
+  await dbAudit(req, 'privacy.settings.update', 'privacy_settings', '0', { updated: result.updated, count: settings.length });
+  return res.json({ message: 'Privacidad actualizada', updated: result.updated });
+};
+
 const dbAudit = async (req, action, entityType, entityId, metadata) => {
-  const db = require('../../config/db');
   await db.query(
     'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
     [req.user.id, action, entityType, String(entityId), JSON.stringify(metadata || {}), req.ip]
@@ -127,6 +137,7 @@ module.exports = {
   getConsentHistory,
   getConsentStatus,
   getPrivacySettings,
+  updatePrivacySettings,
   createDataRequest,
   listMyDataRequests,
   listAllDataRequests,
