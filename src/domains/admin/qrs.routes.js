@@ -11,6 +11,12 @@ const {
   unlinkQr,
   setPrintStatus,
   archiveQr,
+  setQrStatus,
+  activateQr,
+  deactivateQr,
+  deleteQr,
+  bulkSetQrStatus,
+  bulkDeleteQr,
   bulkPrintStatus,
   exportByIds,
 } = require('./qrs.controller');
@@ -51,6 +57,38 @@ const archiveSchema = z.object({
   }),
 });
 
+const qrStatusSchema = z.object({
+  params: z.object({ id: z.string().regex(/^\d+$/, 'ID de QR inválido') }),
+  body: z.object({
+    status: z.enum(['active', 'disabled']),
+  }),
+});
+
+const qrDeleteSchema = z.object({
+  params: z.object({ id: z.string().regex(/^\d+$/, 'ID de QR inválido') }),
+  body: z.object({
+    force: z.boolean().optional(),
+  }),
+});
+
+const bulkQrStatusSchema = z.object({
+  body: z.object({
+    qr_ids: z.array(
+      z.union([z.string().regex(/^\d+$/), z.number().int()])
+    ).min(1, 'Se requiere al menos un QR'),
+    status: z.enum(['active', 'disabled']),
+  }),
+});
+
+const bulkQrDeleteSchema = z.object({
+  body: z.object({
+    qr_ids: z.array(
+      z.union([z.string().regex(/^\d+$/), z.number().int()])
+    ).min(1, 'Se requiere al menos un QR'),
+    force: z.boolean().optional(),
+  }),
+});
+
 const bulkPrintStatusSchema = z.object({
   body: z.object({
     qr_ids: z.array(
@@ -83,10 +121,20 @@ router.post('/unlink', authenticate, authorize('qrs:write'), validate(unlinkSche
 // Acciones masivas de impresión (debe ir ANTES de las rutas con :id para no colisionar).
 router.post('/bulk/print-status', authenticate, authorize('qrs:bulk_actions'), validate(bulkPrintStatusSchema), catchAsync(bulkPrintStatus));
 
+// Acciones masivas: activar/desactivar/eliminar QRs.
+router.post('/bulk/activate', authenticate, authorize('qrs:write'), validate(bulkQrStatusSchema), catchAsync(bulkSetQrStatus));
+router.post('/bulk/deactivate', authenticate, authorize('qrs:write'), validate(bulkQrStatusSchema), catchAsync(bulkSetQrStatus));
+router.post('/bulk/delete', authenticate, authorize('qrs:archive'), validate(bulkQrDeleteSchema), catchAsync(bulkDeleteQr));
+
 router.post('/:id/print-status', authenticate, authorize('qrs:write'), validate(printStatusSchema), catchAsync(setPrintStatus));
 
 // Archivado lógico (no borrado físico).
 router.post('/:id/archive', authenticate, authorize('qrs:archive'), validate(archiveSchema), catchAsync(archiveQr));
+
+// Activar / desactivar / eliminar un QR individual.
+router.post('/:id/activate', authenticate, authorize('qrs:write'), catchAsync(activateQr));
+router.post('/:id/deactivate', authenticate, authorize('qrs:write'), catchAsync(deactivateQr));
+router.delete('/:id', authenticate, authorize('qrs:archive'), validate(qrDeleteSchema), catchAsync(deleteQr));
 
 router.get('/export/csv', authenticate, authorize('qrs:export'), validate(exportSchema), (req, res) => exportByIds(req, res, 'csv'));
 router.get('/export/zip', authenticate, authorize('qrs:export'), validate(exportSchema), (req, res) => exportByIds(req, res, 'zip'));

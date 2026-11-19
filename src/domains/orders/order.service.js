@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const db = require('../../config/db');
 const emailService = require('../../domains/email/email.service');
+const { activateQr, activateQrForProfile } = require('../identifiers/identifier.service');
+const { assignOrCreateForOrder } = require('../qr-inventory/qr-inventory.service');
 
 const STICKER_PRODUCT_SLUG = 'sticker-qr-personalizado';
 const STICKER_PACK_QUANTITY = 2;
@@ -898,6 +900,22 @@ const adminUpdateOrderStatus = async (req, res) => {
       // El correo nunca bloquea la actualización del pedido.
     }
 
+    // ───────── Generar/activar QR cuando el admin confirma el pago ─────────
+    // Flujo híbrido: Mercado Pago webhook o pago manual desde el admin.
+    if (next.payment_status === 'approved' || next.commercial_status === 'paid') {
+      try {
+        if (order.package_id) {
+          // Paquete comercial: crear/asignar paquete QR vinculado al pedido.
+          await assignOrCreateForOrder(order.id);
+        } else {
+          // Stickers simples: activar el identificador pendiente existente.
+          await activateQr(order.user_id, order.id, req.ip);
+        }
+      } catch {
+        // La activación de QR nunca bloquea la respuesta al admin.
+      }
+    }
+
     return res.json({
       message: 'Estado actualizado',
       order: { id, order_number: order.order_number, previous, next },
@@ -909,8 +927,6 @@ const adminUpdateOrderStatus = async (req, res) => {
     conn.release();
   }
 };
-
-/* ───────── Administración: transportadora y guía ───────── */
 const adminUpdateOrderCarrier = async (req, res) => {
   const { id } = req.params;
   const { carrier, tracking_number, tracking_url } = req.body;

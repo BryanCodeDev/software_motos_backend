@@ -897,8 +897,141 @@ const archiveQr = async ({ qrId, actorId, reason = null, ipAddress = null, force
 };
 
 // ---------------------------------------------------------------------------
-// Control de impresión: actualizar estado en lote con validación por registro.
+// Activar / desactivar un QR (cambia el estado comercial entre active y disabled).
+// Un QR desactivado no escanea ni devuelve información de emergencia.
 // ---------------------------------------------------------------------------
+const setQrStatus = async ({ qrId, status, actorId, ipAddress = null }) => {
+  const allowed = ['active', 'disabled'];
+  if (!allowed.includes(status)) {
+    return { error: 'invalid_status', status: 400 };
+  }
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, status, archived_at FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
+    );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+
+    if (qr.archived_at) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_archived', status: 409, detail: 'No se puede activar/desactivar un QR archivado.' };
+    }
+
+    const previous = qr.status;
+    if (previous === status) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_already_status', status: 409, detail: `El QR ya está ${status}.` };
+    }
+
+    await conn.query(
+      'UPDATE identifiers SET status = ? WHERE id = ?',
+      [status, qrId]
+    );
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        `qr.status_${status}`,
+        'identifiers',
+        String(qrId),
+        JSON.stringify({ value: qr.value, previous_status: previous, new_status: status, user_id: qr.user_id }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return { qr_id: qrId, value: qr.value, previous_status: previous, status };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Eliminar un QR (borrado físico). Solo se permite si no está vinculado a un
+// pedido en producción o a un usuario activo, salvo operación forzada.
+// ---------------------------------------------------------------------------
+const deleteQr = async ({ qrId, actorId, ipAddress = null, force = false }) => {
+  const conn = await db.getConnection();
+  try {
+    await conn.query('START TRANSACTION');
+
+    const [qrRows] = await conn.query(
+      'SELECT id, value, user_id, status, archived_at, order_id FROM identifiers WHERE id = ? FOR UPDATE',
+      [qrId]
+    );
+    if (qrRows.length === 0) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_not_found', status: 404 };
+    }
+    const qr = qrRows[0];
+
+    if (qr.archived_at) {
+      await conn.query('ROLLBACK');
+      return { error: 'qr_archived', status: 409, detail: 'El QR ya está archivado.' };
+    }
+
+    // No eliminar un QR vinculado a un usuario salvo operación forzada.
+    if (!force && qr.user_id) {
+      await conn.query('ROLLBACK');
+      return {
+        error: 'qr_linked_to_user',
+        status: 409,
+        detail: `El QR está vinculado al usuario ${qr.user_id}. No se puede eliminar un QR asignado.`,
+      };
+    }
+
+    // No eliminar un QR vinculado a un pedido en producción salvo operación forzada.
+    if (!force && qr.order_id) {
+      const [orders] = await conn.query(
+        'SELECT id, order_number, commercial_status FROM orders WHERE id = ?',
+        [qr.order_id]
+      );
+      if (orders.length) {
+        const order = orders[0];
+        if (['preparing', 'shipped', 'delivered', 'paid'].includes(order.commercial_status)) {
+          await conn.query('ROLLBACK');
+          return {
+            error: 'qr_in_production_or_shipping',
+            status: 409,
+            detail: `El QR está vinculado al pedido ${order.order_number} en estado ${order.commercial_status}.`,
+          };
+        }
+      }
+    }
+
+    const value = qr.value;
+    await conn.query('DELETE FROM identifiers WHERE id = ?', [qrId]);
+    await conn.query(
+      'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',
+      [
+        actorId,
+        'qr.delete',
+        'identifiers',
+        String(qrId),
+        JSON.stringify({ value, previous_user_id: qr.user_id, order_id: qr.order_id, previous_status: qr.status }),
+        ipAddress,
+      ]
+    );
+
+    await conn.query('COMMIT');
+    return { qr_id: qrId, value, deleted: true };
+  } catch (error) {
+    await conn.query('ROLLBACK').catch(() => {});
+    throw error;
+  } finally {
+    conn.release();
+  }
+};
 const bulkUpdatePrintStatus = async ({ qr_ids, print_status, actorId, ipAddress = null }) => {
   if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
     return { error: 'missing_qr_ids', status: 400 };
@@ -1585,6 +1718,8 @@ module.exports = {
   exportQrsByIdsPdf,
   createQr,
   archiveQr,
+  setQrStatus,
+  deleteQr,
   bulkUpdatePrintStatus,
   recordScan,
 };

@@ -73,6 +73,134 @@ const archiveQr = async (req, res) => {
   return handleServiceResult(res, result, 200);
 };
 
+const setQrStatus = async (req, res) => {
+  const { id } = req.validated.params || {};
+  const { status } = req.validated.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.setQrStatus({
+    qrId: id,
+    status,
+    actorId,
+    ipAddress: req.ip,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
+const deleteQr = async (req, res) => {
+  const { id } = req.validated.params || {};
+  const { force } = req.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.deleteQr({
+    qrId: id,
+    actorId,
+    ipAddress: req.ip,
+    force: force === true,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
+const activateQr = async (req, res) => {
+  const { id } = req.validated.params || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.setQrStatus({
+    qrId: id,
+    status: 'active',
+    actorId,
+    ipAddress: req.ip,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
+const deactivateQr = async (req, res) => {
+  const { id } = req.validated.params || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const result = await identifierService.setQrStatus({
+    qrId: id,
+    status: 'disabled',
+    actorId,
+    ipAddress: req.ip,
+  });
+  return handleServiceResult(res, result, 200);
+};
+
+const bulkSetQrStatus = async (req, res) => {
+  const { qr_ids, status } = req.validated.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  const allowed = ['active', 'disabled'];
+  if (!allowed.includes(status)) {
+    return res.status(400).json({ error: 'Estado inválido', code: 'invalid_status' });
+  }
+  if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
+    return res.status(400).json({ error: 'Se requieren identificadores de QR', code: 'missing_qr_ids' });
+  }
+
+  let ok = 0;
+  let fail = 0;
+  const errors = [];
+  for (const qrId of qr_ids) {
+    try {
+      const result = await identifierService.setQrStatus({
+        qrId,
+        status,
+        actorId,
+        ipAddress: req.ip,
+      });
+      if (result.error) {
+        fail += 1;
+        errors.push({ qr_id: qrId, error: result.error });
+      } else {
+        ok += 1;
+      }
+    } catch {
+      fail += 1;
+      errors.push({ qr_id: qrId, error: 'server_error' });
+    }
+  }
+  return res.status(200).json({
+    ok,
+    fail,
+    errors,
+    message: `${ok} QR ${status === 'active' ? 'activados' : 'desactivados'}${fail ? `, ${fail} fallaron` : ''}`,
+  });
+};
+
+const bulkDeleteQr = async (req, res) => {
+  const { qr_ids, force } = req.validated.body || {};
+  const actorId = req.user && req.user.id ? req.user.id : null;
+  if (!Array.isArray(qr_ids) || qr_ids.length === 0) {
+    return res.status(400).json({ error: 'Se requieren identificadores de QR', code: 'missing_qr_ids' });
+  }
+
+  let ok = 0;
+  let fail = 0;
+  const errors = [];
+  for (const qrId of qr_ids) {
+    try {
+      const result = await identifierService.deleteQr({
+        qrId,
+        actorId,
+        ipAddress: req.ip,
+        force: force === true,
+      });
+      if (result.error) {
+        fail += 1;
+        errors.push({ qr_id: qrId, error: result.error });
+      } else {
+        ok += 1;
+      }
+    } catch {
+      fail += 1;
+      errors.push({ qr_id: qrId, error: 'server_error' });
+    }
+  }
+  return res.status(200).json({
+    ok,
+    fail,
+    errors,
+    message: `${ok} QR eliminado${ok !== 1 ? 's' : ''}${fail ? `, ${fail} fallaron` : ''}`,
+  });
+};
+
 const bulkPrintStatus = async (req, res) => {
   const { qr_ids, print_status } = req.validated.body || {};
   const actorId = req.user && req.user.id ? req.user.id : null;
@@ -125,6 +253,12 @@ module.exports = {
   unlinkQr,
   setPrintStatus,
   archiveQr,
+  setQrStatus,
+  activateQr,
+  deactivateQr,
+  deleteQr,
+  bulkSetQrStatus,
+  bulkDeleteQr,
   bulkPrintStatus,
   exportByIds,
 };
