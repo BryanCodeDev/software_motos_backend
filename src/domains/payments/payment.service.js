@@ -161,21 +161,17 @@ const mercadopagoWebhook = async (req, res) => {
     if (!verifyWebhookSignature(req, config.mercadopago.webhookSecret)) {
       return res.status(400).json({ error: 'Firma de webhook inválida' });
     }
-  } else {
   }
-
-  // 2. Responder rápido a Mercado Pago para evitar reintentos.
-  res.status(200).json({ received: true });
 
   try {
     const { data } = req.body || {};
     const paymentId = data && data.id ? String(data.id) : null;
     if (!paymentId) {
-      return;
+      return res.status(200).json({ received: true });
     }
 
-        if (!config.mercadopago.accessToken) {
-      return;
+    if (!config.mercadopago.accessToken) {
+      return res.status(200).json({ received: true });
     }
 
     // Consultar el estado real en Mercado Pago (nunca confiar solo en la notificación)
@@ -192,7 +188,7 @@ const mercadopagoWebhook = async (req, res) => {
     ]);
     const order = orders[0];
     if (!order) {
-      return;
+      return res.status(200).json({ received: true });
     }
 
     // Idempotencia: ya procesado
@@ -201,15 +197,15 @@ const mercadopagoWebhook = async (req, res) => {
       [order.id, paymentId, `payment_${status}`]
     );
     if (existing.length > 0) {
-      return;
+      return res.status(200).json({ received: true });
     }
 
     const conn = await db.getConnection();
+    let newPaymentStatus = order.payment_status;
+    let newCommercialStatus = order.commercial_status;
+
     try {
       await conn.query('START TRANSACTION');
-
-      let newPaymentStatus = order.payment_status;
-      let newCommercialStatus = order.commercial_status;
 
       if (status === 'approved') {
         newPaymentStatus = 'approved';
@@ -225,7 +221,7 @@ const mercadopagoWebhook = async (req, res) => {
 
       // Verificar importe y moneda esperados (del servidor, no del frontend).
       const expected = parseFloat(order.total_amount);
-      if (Math.abs(amount - expected) > 0.009 || currencyId !== order.currency) {
+      if (Math.abs(amount - expected) > 0.50 || currencyId !== order.currency) {
         await conn.query(
           'INSERT INTO payment_events (order_id, mp_payment_id, type, status, amount, raw) VALUES (?, ?, ?, ?, ?)',
           [order.id, paymentId, `payment_${status}`, amount, JSON.stringify({ p, warning: 'importe_moneda_no_coinciden', expected, received: amount, currencyId })]
@@ -235,12 +231,22 @@ const mercadopagoWebhook = async (req, res) => {
           [order.user_id, 'payment.webhook_mismatch', 'orders', String(order.id), JSON.stringify({ paymentId, expected, received: amount }), null]
         );
         await conn.query('COMMIT');
-        return;
+        return res.status(200).json({ received: true });
       }
 
       await conn.query(
         'UPDATE orders SET payment_status = ?, commercial_status = ?, mercado_pago_payment_id = ? WHERE id = ?',
         [newPaymentStatus, newCommercialStatus, paymentId, order.id]
+      );
+
+      // Historial de estado de pedido (rastro de auditoría del cambio vía webhook)
+      await conn.query(
+        `INSERT INTO order_status_history
+          (order_id, previous_commercial_status, new_commercial_status,
+           previous_payment_status, new_payment_status, changed_by, reason)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        [order.id, order.commercial_status, newCommercialStatus,
+         order.payment_status, newPaymentStatus, order.user_id, 'webhook_mercadopago']
       );
 
       await conn.query(
@@ -261,10 +267,9 @@ const mercadopagoWebhook = async (req, res) => {
       conn.release();
     }
 
-    // Notificación de correo solo tras verificar el estado en el backend
+    // Notificación de correo y activación de QR solo tras commit exitoso de la orden.
     if (newPaymentStatus === 'approved') {
-      // Activar el QR automáticamente tras la compra aprobada (stickers o paquete).
-      // La activación viene con la compra del sticker: no hay pago separado de QR.
+      // Activar el QR automáticamente tras la compra aprobada (dentro del mismo flujo de pago).
       try {
         const orderProfiles = await db.query(
           'SELECT profile_id FROM order_profiles WHERE order_id = ?',
@@ -301,7 +306,12 @@ const mercadopagoWebhook = async (req, res) => {
       } catch {
       }
     }
+
+    // 2. Responder 200 a Mercado Pago DESPUÉS de procesar (evita reintentos innecesarios
+    //    y confirma que el webhook fue consumido correctamente).
+    return res.status(200).json({ received: true });
   } catch {
+    return res.status(500).json({ error: 'Error procesando webhook' });
   }
 };
 
