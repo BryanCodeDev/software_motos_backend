@@ -47,13 +47,13 @@ const register = async (req, res) => {
       [userId, profile_type, relationship, display_name || name]
     );
 
-    /* Crear y activar el QR de emergencia por defecto al registrar la cuenta. */
+    /* Crear el QR de emergencia al registrar la cuenta. Queda pendiente de activación hasta que el usuario compre sus stickers. */
     try {
       const identifierValue = `emg_${nodeCrypto.randomBytes(12).toString('hex')}`;
       const frontendBase = (config.frontendUrl || config.appUrl || 'http://localhost:5173').replace(/\/+$/, '');
       await db.query(
-        'INSERT INTO identifiers (user_id, profile_id, value, status, activation_at) SELECT ?, id, ?, ?, NOW() FROM emergency_profiles WHERE user_id = ? AND is_active = 1 LIMIT 1',
-        [userId, identifierValue, 'active', userId]
+        'INSERT INTO identifiers (user_id, profile_id, value, status, activation_at) SELECT ?, id, ?, ?, NULL FROM emergency_profiles WHERE user_id = ? AND is_active = 1 LIMIT 1',
+        [userId, identifierValue, 'pending_activation', userId]
       );
       await db.query(
         'INSERT INTO audit_logs (actor_user_id, action, entity_type, entity_id, metadata, ip_address) VALUES (?, ?, ?, ?, ?, ?)',

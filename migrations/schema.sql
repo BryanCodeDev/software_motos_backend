@@ -546,4 +546,9 @@ ALTER TABLE emergency_profiles DROP INDEX uk_emergency_profiles_user;
 ALTER TABLE emergency_profiles ADD INDEX idx_emergency_profiles_main (user_id, is_main);
 ALTER TABLE identifiers DROP INDEX uq_identifiers_one_active_per_user;
 
+-- Permitir asignar un diseño de sticker a cada identificador QR (para producción/impresión por lote).
+ALTER TABLE identifiers ADD COLUMN design_id INT UNSIGNED NULL DEFAULT NULL COMMENT 'Diseño de sticker asignado a este QR';
+ALTER TABLE identifiers ADD CONSTRAINT fk_identifiers_design FOREIGN KEY (design_id) REFERENCES product_designs(id) ON DELETE SET NULL;
+CREATE INDEX idx_identifiers_design ON identifiers(design_id);
+
 SET FOREIGN_KEY_CHECKS = 1;

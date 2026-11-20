@@ -18,6 +18,7 @@ const {
   bulkSetQrStatus,
   bulkDeleteQr,
   bulkPrintStatus,
+  bulkSetDesign,
   exportByIds,
 } = require('./qrs.controller');
 
@@ -100,6 +101,15 @@ const bulkPrintStatusSchema = z.object({
   }),
 });
 
+const bulkQrDesignSchema = z.object({
+  body: z.object({
+    qr_ids: z.array(
+      z.union([z.string().regex(/^\d+$/), z.number().int()])
+    ).min(1, 'Se requiere al menos un QR'),
+    design_id: z.coerce.number().int().positive().optional().nullable(),
+  }),
+});
+
 const exportSchema = z.object({
   query: z.object({
     ids: z.string().nonempty('Se requieren identificadores de QR'),
@@ -125,6 +135,7 @@ router.post('/bulk/print-status', authenticate, authorize('qrs:bulk_actions'), v
 router.post('/bulk/activate', authenticate, authorize('qrs:write'), validate(bulkQrStatusSchema), catchAsync(bulkSetQrStatus));
 router.post('/bulk/deactivate', authenticate, authorize('qrs:write'), validate(bulkQrStatusSchema), catchAsync(bulkSetQrStatus));
 router.post('/bulk/delete', authenticate, authorize('qrs:archive'), validate(bulkQrDeleteSchema), catchAsync(bulkDeleteQr));
+router.patch('/bulk/design', authenticate, authorize('qrs:write'), validate(bulkQrDesignSchema), catchAsync(bulkSetDesign));
 
 router.post('/:id/print-status', authenticate, authorize('qrs:write'), validate(printStatusSchema), catchAsync(setPrintStatus));
 
