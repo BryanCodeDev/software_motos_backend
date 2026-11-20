@@ -114,6 +114,17 @@ const exportSchema = z.object({
   query: z.object({
     ids: z.string().nonempty('Se requieren identificadores de QR'),
     format: z.enum(['csv', 'zip', 'pdf']).default('csv'),
+    /* Parámetros de impresión para stickers de vinilo */
+    size: z.enum(['5x5', '50x100', '100x100', 'custom']).default('5x5'),
+    width_mm: z.coerce.number().positive().optional(),
+    height_mm: z.coerce.number().positive().optional(),
+    laminate: z.enum(['none', 'matte', 'glossy']).default('none'),
+    cut: z.enum(['die', 'precise', 'none']).default('die'),
+    quantity: z.coerce.number().int().positive().optional(),
+    columns: z.coerce.number().int().min(1).max(10).optional(),
+    rows_per_page: z.coerce.number().int().min(1).max(20).optional(),
+    gap_mm: z.coerce.number().min(0).max(30).optional(),
+    margin_mm: z.coerce.number().min(0).max(40).optional(),
   }),
 });
 

@@ -1533,7 +1533,7 @@ const exportQrsByIdsZip = async (qrIds, res) => {
   return { sent: true };
 };
 
-// Exportación PDF de producción por IDs de QR (cuadrícula para impresión de stickers).
+// Exportación PDF de producción por IDs de QR (cuadrícula para impresión de stickers de vinilo).
 const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
   const rows = await fetchQrsByIds(qrIds);
   if (rows.length === 0) {
@@ -1541,23 +1541,38 @@ const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
   }
 
   const PDFDocument = require('pdfkit');
-  const { columns = '3', rowsPerPage = '5', size_mm = '25', gap_mm = '8', margin_mm = '12' } = query;
 
-  const columnsNum = Math.max(1, Math.min(10, parseInt(columns, 10) || 3));
-  const rowsNum = Math.max(1, Math.min(20, parseInt(rowsPerPage, 10) || 5));
-  const size = Math.max(15, Math.min(100, parseFloat(size_mm) || 25));
-  const gap = Math.max(0, Math.min(30, parseFloat(gap_mm) || 8));
-  const margin = Math.max(0, Math.min(40, parseFloat(margin_mm) || 12));
+  /* Parámetros de impresión de sticker */
+  const sizePreset = query.size || '5x5'; // '5x5' | '50x100' | '100x100' | 'custom'
+  const laminate = query.laminate || 'none'; // 'none' | 'matte' | 'glossy'
+  const cut = query.cut || 'die'; // 'die' | 'precise' | 'none'
+  const quantity = Math.max(1, Math.min(1000, parseInt(query.quantity, 10) || 1));
+
+  const width_mm = query.width_mm ? parseFloat(query.width_mm) : null;
+  const height_mm = query.height_mm ? parseFloat(query.height_mm) : null;
+
+  let stickerW = 5;
+  let stickerH = 5;
+  if (sizePreset === '5x5') { stickerW = 5; stickerH = 5; }
+  else if (sizePreset === '50x100') { stickerW = 50; stickerH = 100; }
+  else if (sizePreset === '100x100') { stickerW = 100; stickerH = 100; }
+  else if (width_mm && height_mm) { stickerW = width_mm; stickerH = height_mm; }
+
+  const columnsNum = Math.max(1, Math.min(10, parseInt(query.columns, 10) || 3));
+  const rowsNum = Math.max(1, Math.min(20, parseInt(query.rows_per_page, 10) || 5));
+  const gap_mm = Math.max(0, Math.min(30, parseFloat(query.gap_mm) || 8));
+  const margin_mm = Math.max(0, Math.min(40, parseFloat(query.margin_mm) || 12));
 
   const MM_TO_PT = 2.834645669;
   const pageW = 210 * MM_TO_PT;
   const pageH = 297 * MM_TO_PT;
-  const gapPt = gap * MM_TO_PT;
-  const marginPt = margin * MM_TO_PT;
+  const gapPt = gap_mm * MM_TO_PT;
+  const marginPt = margin_mm * MM_TO_PT;
   const usableW = pageW - 2 * marginPt;
   const usableH = pageH - 2 * marginPt;
-  const cellW = size * MM_TO_PT;
-  const cellH = size * MM_TO_PT;
+
+  const cellW = stickerW * MM_TO_PT;
+  const cellH = stickerH * MM_TO_PT;
   const maxCellW = (usableW - (columnsNum - 1) * gapPt) / columnsNum;
   const maxCellH = (usableH - (rowsNum - 1) * gapPt) / rowsNum;
   const cellPt = Math.min(cellW, cellH, maxCellW, maxCellH);
@@ -1568,20 +1583,24 @@ const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
   const end = new Promise((resolve) => doc.on('end', resolve));
 
   res.set('Content-Type', 'application/pdf');
-  res.set('Content-Disposition', 'attachment; filename="qrs-produccion.pdf"');
+  res.set('Content-Disposition', `attachment; filename="stickers-${stickerW}x${stickerH}mm-${cut}-${laminate}.pdf"`);
   res.set('Cache-Control', 'private, no-store');
 
   doc.pipe(res);
 
+  const laminateText = laminate === 'none' ? 'Sin laminar' : laminate === 'matte' ? 'Laminado mate' : 'Laminado brillante';
+  const cutText = cut === 'die' ? 'Troquel' : cut === 'precise' ? 'Precorte' : 'Sin corte';
+
   let index = 0;
   const total = rows.length;
-  while (index < total) {
-    if (index > 0) {
+  let printed = 0;
+  while (printed < quantity && index < total) {
+    if (printed > 0 && printed % total === 0) {
       doc.addPage();
     }
-    for (let r = 0; r < rowsNum && index < total; r++) {
-      for (let c = 0; c < columnsNum && index < total; c++) {
-        const row = rows[index];
+    for (let r = 0; r < rowsNum && printed < quantity; r++) {
+      for (let c = 0; c < columnsNum && printed < quantity; c++) {
+        const row = rows[index % total];
         const x = marginPt + c * (cellPt + gapPt);
         const y = marginPt + r * (cellPt + gapPt);
         let png;
@@ -1592,18 +1611,22 @@ const exportQrsByIdsPdf = async (qrIds, res, query = {}) => {
           continue;
         }
         doc.image(png, x, y, { fit: [cellPt, cellPt], align: 'center', valign: 'center' });
-        doc.fontSize(7).fillColor('#0b1016').text(row.value, x, y + cellPt + 2, {
+        doc.fontSize(6).fillColor('#0b1016').text(row.value, x, y + cellPt + 2, {
           width: cellPt,
           align: 'center',
         });
         index += 1;
+        printed += 1;
       }
+    }
+    if (printed < quantity) {
+      doc.addPage();
     }
   }
 
   doc.end();
   await end;
-  return { sent: true };
+  return { sent: true, printed, size: `${stickerW}x${stickerH}mm`, laminate, cut };
 };
 
 /* ───────── Crear QR sin usuario (disponible para asignación posterior) ───────── */
