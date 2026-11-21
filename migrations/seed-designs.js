@@ -6,16 +6,16 @@
 const db = require('../src/config/db');
 
 const DESIGNS = [
-  { name: 'Diseño 1', slug: 'diseno-1', image_url: '/img/sticker-1.png', is_available: 1, sort_order: 1 },
-  { name: 'Diseño 2', slug: 'diseno-2', image_url: '/img/sticker-2.png', is_available: 1, sort_order: 2 },
-  { name: 'Diseño 3', slug: 'diseno-3', image_url: '/img/sticker-3.png', is_available: 1, sort_order: 3 },
-  { name: 'Diseño 4', slug: 'diseno-4', image_url: '/img/sticker-4.png', is_available: 1, sort_order: 4 },
-  { name: 'Diseño 5', slug: 'diseno-5', image_url: '/img/sticker-5.png', is_available: 1, sort_order: 5 },
-  { name: 'Diseño 6', slug: 'diseno-6', image_url: '/img/sticker-6.png', is_available: 1, sort_order: 6 },
-  { name: 'Diseño 7', slug: 'diseno-7', image_url: '/img/sticker-7.png', is_available: 1, sort_order: 7 },
-  { name: 'Diseño 8', slug: 'diseno-8', image_url: '/img/sticker-8.png', is_available: 1, sort_order: 8 },
-  { name: 'Diseño 9', slug: 'diseno-9', image_url: '/img/sticker-9.png', is_available: 1, sort_order: 9 },
-  { name: 'Diseño 10', slug: 'diseno-10', image_url: '/img/sticker-10.png', is_available: 1, sort_order: 10 },
+  { name: 'Diseño 1', slug: 'diseno-1', image_url: '/img/sticker-1.webp', is_available: 1, sort_order: 1 },
+  { name: 'Diseño 2', slug: 'diseno-2', image_url: '/img/sticker-2.webp', is_available: 1, sort_order: 2 },
+  { name: 'Diseño 3', slug: 'diseno-3', image_url: '/img/sticker-3.webp', is_available: 1, sort_order: 3 },
+  { name: 'Diseño 4', slug: 'diseno-4', image_url: '/img/sticker-4.webp', is_available: 1, sort_order: 4 },
+  { name: 'Diseño 5', slug: 'diseno-5', image_url: '/img/sticker-5.webp', is_available: 1, sort_order: 5 },
+  { name: 'Diseño 6', slug: 'diseno-6', image_url: '/img/sticker-6.webp', is_available: 1, sort_order: 6 },
+  { name: 'Diseño 7', slug: 'diseno-7', image_url: '/img/sticker-7.webp', is_available: 1, sort_order: 7 },
+  { name: 'Diseño 8', slug: 'diseno-8', image_url: '/img/sticker-8.webp', is_available: 1, sort_order: 8 },
+  { name: 'Diseño 9', slug: 'diseno-9', image_url: '/img/sticker-9.webp', is_available: 1, sort_order: 9 },
+  { name: 'Diseño 10', slug: 'diseno-10', image_url: '/img/sticker-10.webp', is_available: 1, sort_order: 10 },
 ];
 
 (async () => {
